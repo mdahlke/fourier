@@ -1,0 +1,9 @@
+services:
+  fourier:
+    build: .
+    ports:
+      - "${PORT:-8080}:80"
+    volumes:
+      # live-edit: changes in public/ show up on browser refresh, no rebuild needed
+      - ./public:/usr/share/nginx/html:ro
+    restart: unless-stopped

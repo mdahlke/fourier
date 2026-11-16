@@ -1,0 +1,99 @@
+:root {
+  --bg: #0b0d12;
+  --panel: rgba(17, 20, 29, 0.9);
+  --fg: #e8eaf0;
+  --muted: #8b91a3;
+  --line: rgba(255, 255, 255, 0.09);
+  --btn: #1c2130;
+  --btn-hover: #272e42;
+  --accent: #ffc94a;
+  --accent-fg: #1a1406;
+  --trail: #ffc94a;
+  --circle: rgba(130, 165, 255, 0.28);
+  --arrow: rgba(225, 232, 255, 0.85);
+  --orig: rgba(255, 255, 255, 0.16);
+  --ink: #7fd1ff;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f4ee;
+    --panel: rgba(255, 255, 255, 0.92);
+    --fg: #1d2030;
+    --muted: #6a6f80;
+    --line: rgba(0, 0, 0, 0.09);
+    --btn: #ecebe6;
+    --btn-hover: #e0ded6;
+    --accent: #d9480f;
+    --accent-fg: #fff;
+    --trail: #d9480f;
+    --circle: rgba(40, 70, 170, 0.22);
+    --arrow: rgba(30, 40, 70, 0.8);
+    --orig: rgba(0, 0, 0, 0.14);
+    --ink: #1c6fb8;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+canvas { position: fixed; inset: 0; display: block; touch-action: none; cursor: crosshair; }
+
+#hint { position: fixed; left: 50%; top: 24px; transform: translateX(-50%); pointer-events: none;
+  padding: 8px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line);
+  color: var(--muted); transition: opacity .3s; white-space: nowrap; }
+#hint.hidden { opacity: 0; }
+
+#panel { position: fixed; top: 12px; right: 12px; bottom: 12px; width: 316px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  transition: transform .25s ease, opacity .25s; }
+body.panel-closed #panel { transform: translateX(calc(100% + 24px)); opacity: 0; pointer-events: none; }
+
+#panelToggle { position: fixed; top: 12px; right: 340px; z-index: 2; width: 40px; height: 40px; padding: 0;
+  font-size: 18px; transition: right .25s; }
+body.panel-closed #panelToggle { right: 12px; }
+
+header h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+header p { margin: 2px 0 0; color: var(--muted); }
+
+section { margin-top: 16px; }
+section.row { display: flex; gap: 8px; }
+section.row > * { flex: 1; }
+.title { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px;
+  text-transform: uppercase; letter-spacing: .06em; margin: 10px 0 4px; }
+.title output { color: var(--fg); text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+button { font: inherit; color: var(--fg); background: var(--btn); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 10px; cursor: pointer; }
+button:hover { background: var(--btn-hover); }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+
+.presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.presets button { padding: 6px 4px; font-size: 13px; }
+
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.toggles label { display: flex; align-items: center; gap: 8px; margin: 6px 0; cursor: pointer; }
+.toggles input { accent-color: var(--accent); }
+
+input[type=file] { width: 100%; color: var(--muted); font-size: 12px; }
+textarea { width: 100%; margin: 8px 0; resize: vertical; font: 12px/1.4 ui-monospace, monospace;
+  background: var(--btn); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.err { color: #ff6b6b; font-size: 12px; margin: 6px 0 0; min-height: 1em; }
+
+footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+kbd { font: 11px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); background: var(--btn); }
+
+#svgHost { position: absolute; width: 0; height: 0; overflow: hidden; visibility: hidden; }
+
+@media (max-width: 760px) {
+  #panel { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 55vh; }
+  body.panel-closed #panel { transform: translateY(calc(100% + 24px)); }
+  #panelToggle, body.panel-closed #panelToggle { right: 12px; top: 12px; }
+  #hint { top: 64px; }
+}
+.row.tight { display: flex; gap: 6px; margin-top: 8px; }
+.row.tight > :first-child { flex: 1; }

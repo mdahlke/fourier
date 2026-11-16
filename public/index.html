@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Fourier Draw</title>
+  <meta name="description" content="Draw anything and watch a chain of spinning arrows (a Fourier series) trace it.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="hint">Draw something with your mouse or finger ✏️</div>
+
+  <button id="panelToggle" aria-label="Toggle controls">☰</button>
+
+  <aside id="panel">
+    <header>
+      <h1>Fourier Draw</h1>
+      <p>Any closed path = a sum of spinning arrows.</p>
+    </header>
+
+    <section class="row">
+      <button id="drawBtn" title="Clear and draw a new shape">✏️ New drawing</button>
+      <button id="animBtn" class="primary" title="Enter">▶ Animate</button>
+    </section>
+    <section class="row">
+      <button id="undoBtn">↶ Undo stroke</button>
+      <button id="pauseBtn" title="Space">⏸ Pause</button>
+    </section>
+
+    <section>
+      <label class="title">Presets</label>
+      <div class="presets" id="presets"></div>
+    </section>
+
+    <section>
+      <label class="title">Circles <output id="termsOut"></output></label>
+      <input type="range" id="terms" min="0" max="1000" value="727">
+      <label class="title">Speed <output id="speedOut"></output></label>
+      <input type="range" id="speed" min="1" max="100" value="20">
+      <label class="title">Zoom <output id="zoomOut"></output></label>
+      <input type="range" id="zoom" min="0" max="1000" value="0">
+      <div class="row tight">
+        <button id="diveBtn" title="D">🔍 Dive to smallest circle</button>
+        <button id="zoomResetBtn" title="0">⟲ 1×</button>
+      </div>
+    </section>
+
+    <section class="toggles">
+      <label><input type="checkbox" id="optCircles" checked> Show circles</label>
+      <label><input type="checkbox" id="optArrows" checked> Show arrows</label>
+      <label><input type="checkbox" id="optOriginal"> Show original drawing</label>
+      <label><input type="checkbox" id="optFollow" checked> Camera follows pen when zoomed</label>
+      <label><input type="checkbox" id="optBuild"> Build up: more circles each loop</label>
+      <label><input type="checkbox" id="optAuto" checked> Auto-animate after drawing</label>
+    </section>
+
+    <section>
+      <label class="title">Import SVG</label>
+      <input type="file" id="svgFile" accept=".svg,image/svg+xml">
+      <textarea id="pathInput" rows="3" placeholder="…or paste an SVG path (d=&quot;M10 10 C…&quot;) or a whole <svg> file"></textarea>
+      <button id="pathBtn">Use pasted SVG</button>
+      <p class="err" id="err"></p>
+    </section>
+
+    <section class="row">
+      <button id="pngBtn">⬇ Save PNG</button>
+    </section>
+
+    <footer>
+      <kbd>Space</kbd> pause · <kbd>Enter</kbd> animate · <kbd>Scroll</kbd> zoom (<kbd>Shift</kbd> faster) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>D</kbd> dive · <kbd>0</kbd> reset · <kbd>Z</kbd> undo
+    </footer>
+  </aside>
+
+  <div id="svgHost" aria-hidden="true"></div>
+  <script src="app.js"></script>
+</body>
+</html>
