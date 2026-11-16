@@ -28,7 +28,7 @@ const trackSettled = (name, getData, ms = 1500) => { clearTimeout(timers[name]);
 const bucket = (v, edges) => { for (const [max, label] of edges) if (v <= max) return label; return edges[edges.length - 1][1]; };
 const circlesBucket = (m) => bucket(m, [[10, '1-10'], [50, '11-50'], [250, '51-250'], [1000, '251-1000'], [Infinity, '1001-2048']]);
 const zoomBucket = (z) => z < 10 ? '1-10×' : '10^' + Math.floor(Math.log10(z)) + '×';
-const session = { start: Date.now(), drawings: 0, presets: 0, imports: 0, dives: 0, pngs: 0, maxCircles: 0, maxZoom: 1, touch: false };
+const session = { start: Date.now(), drawings: 0, presets: 0, imports: 0, dives: 0, pngs: 0, maxCircles: 0, maxZoom: 1, touch: false, used3d: false };
 function sendSummary() {
   const secs = (Date.now() - session.start) / 1000;
   trackOnce('session-summary', {
@@ -36,6 +36,7 @@ function sendSummary() {
     drawings: session.drawings, presets: session.presets, imports: session.imports, dives: session.dives, pngs: session.pngs,
     maxCircles: circlesBucket(session.maxCircles || 0), maxZoom: zoomBucket(session.maxZoom),
     input: session.touch ? 'touch' : 'mouse',
+    used3d: session.used3d,
   });
 }
 addEventListener('pagehide', sendSummary);
@@ -59,6 +60,7 @@ const state = {
   autoTimer: null,
   curveDirty: false,
   vmax: 1, rate: 1, rateTarget: 1, dive: null,
+  view: '2d',
 };
 const opts = { circles: true, arrows: true, original: false, follow: true, build: false, auto: true };
 
@@ -68,7 +70,7 @@ function readColors() {
   const cs = getComputedStyle(document.documentElement);
   for (const k of ['bg', 'trail', 'circle', 'arrow', 'orig', 'ink', 'fg']) colors[k] = cs.getPropertyValue('--' + k).trim();
 }
-matchMedia('(prefers-color-scheme: light)').addEventListener('change', readColors);
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => { readColors(); if (view3d) view3d.updateColors(); });
 
 /* ---------------- layout ---------------- */
 function panelOpen() { return !document.body.classList.contains('panel-closed'); }
@@ -86,7 +88,7 @@ function resize() {
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
 }
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { resize(); if (view3d) view3d.resize(); });
 
 /* ---------------- geometry ---------------- */
 // Concatenate polylines (strokes get joined), close the loop, and sample n points evenly by arc length.
@@ -192,6 +194,7 @@ function loadShape(polys) {
   state.t = 0; state.loops = 0;
   if (opts.build) setM(1);
   buildCurve();
+  if (state.view === '3d' && view3d) view3d.setSource('ribbon', true);
   setZoom(state.zoom);
   updateUI();
   return true;
@@ -341,21 +344,24 @@ const PRESETS = {
 };
 
 /* ---------------- UI wiring ---------------- */
-const termsFromSlider = (v) => Math.max(1, Math.round(Math.pow(N, v / 1000)));
-const sliderFromTerms = (m) => Math.round((Math.log(m) / Math.log(N)) * 1000);
+const in3d = () => state.view === '3d' && view3d;
+const maxTerms = () => (in3d() ? view3d.termCount() : N);
+const termsFromSlider = (v) => Math.max(1, Math.round(Math.pow(maxTerms(), v / 1000)));
+const sliderFromTerms = (m) => Math.round((Math.log(m) / Math.log(maxTerms())) * 1000);
 // Zoom at which the smallest circle in use fills most of the view.
 function smallestCircleZoom() {
+  if (in3d()) return view3d.smallestZoom();
   if (!state.coeffs || state.M < 2) return 50;
   const r = state.coeffs[state.M - 1].amp, v = viewBox();
   return Math.min(ZOOM_CAP, Math.max(50, (0.38 * Math.min(v.w, v.h)) / (Math.max(r, 1e-300) * baseScale())));
 }
-const maxZoom = () => Math.min(ZOOM_CAP, smallestCircleZoom() * ZOOM_PAST);
+const maxZoom = () => (in3d() ? view3d.maxZoom() : Math.min(ZOOM_CAP, smallestCircleZoom() * ZOOM_PAST));
 const zoomFromSlider = (v) => Math.pow(maxZoom(), v / 1000);
 const sliderFromZoom = (z) => Math.round((Math.log(z) / Math.log(maxZoom())) * 1000);
 const fmtZoom = (z) => z < 10 ? z.toFixed(1) + '×' : z < 1e6 ? Math.round(z).toLocaleString() + '×' : z.toExponential(1).replace('e+', '·10^') + '×';
 
 function setM(m) {
-  state.M = Math.min(N, Math.max(1, m));
+  state.M = Math.min(maxTerms(), Math.max(1, m));
   $('terms').value = sliderFromTerms(state.M);
   $('termsOut').textContent = state.M;
   state.curveDirty = true;
@@ -406,7 +412,7 @@ function dive(target) {
   const from = Math.log(state.zoom), to = Math.log(target);
   state.dive = { from, to, start: performance.now(), dur: Math.min(9000, 800 + Math.abs(to - from) * 300) };
 }
-$('drawBtn').addEventListener('click', () => { startNewDrawing(); track('new-drawing'); });
+$('drawBtn').addEventListener('click', () => { if (state.view === '3d') setView('2d'); startNewDrawing(); track('new-drawing'); });
 $('animBtn').addEventListener('click', () => animateDrawing('button'));
 $('undoBtn').addEventListener('click', () => { undo(); trackOnce('undo'); });
 $('pauseBtn').addEventListener('click', () => togglePause('button'));
@@ -417,15 +423,17 @@ function togglePause(via) {
 }
 $('pngBtn').addEventListener('click', () => {
   session.pngs++;
-  track('save-png', { mode: state.mode === 'anim' ? 'animation' : 'drawing', zoomed: state.zoom > 1.5 });
-  canvas.toBlob((b) => {
+  track('save-png', { mode: state.mode === 'anim' ? 'animation' : 'drawing', zoomed: state.zoom > 1.5, view: in3d() ? '3d-' + view3d.source : '2d' });
+  const save = (b) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b); a.download = 'fourier-drawing.png'; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  });
+  };
+  if (in3d()) view3d.savePng(save); else canvas.toBlob(save);
 });
 $('panelToggle').addEventListener('click', () => {
   document.body.classList.toggle('panel-closed');
+  if (view3d) view3d.resize();
   track('panel', { open: panelOpen(), screen: wide() ? 'wide' : 'narrow' });
 });
 
@@ -469,16 +477,54 @@ window.addEventListener('keydown', (e) => {
   else if (k === '-' || k === '_') { state.dive = null; setZoom(state.zoom / 2); userZoomed('keys'); }
   else if (k === 'd') userDive('key');
   else if (k === '0') dive(1);
+  else if (k === '3') setView(state.view === '3d' ? '2d' : '3d');
   else return;
   trackOnce('shortcut', { key: k }, 'shortcut:' + k); // which shortcuts people discover (once each per visit)
 });
 
-canvas.addEventListener('wheel', (e) => {
+function onWheel(e) {
   e.preventDefault();
   state.dive = null;
   setZoom(state.zoom * Math.exp(-e.deltaY * (e.shiftKey ? 0.01 : 0.003)));
   userZoomed('wheel');
-}, { passive: false });
+}
+canvas.addEventListener('wheel', onWheel, { passive: false });
+
+/* ---------------- 3D view (loaded on demand) ---------------- */
+let view3d = null;
+async function setView(v) {
+  if (v === state.view) return;
+  if (v === '3d' && !view3d) {
+    try {
+      const mod = await import('./fourier3d.js');
+      view3d = mod.createView3D({
+        state, opts, N, CURVE_RES, sampleRange, viewBox, onWheel, track, trackOnce,
+        colors: () => colors,
+        ensureCurve: () => { if (state.curveDirty) buildCurve(); },
+        afterLoad: () => { if (opts.build) setM(1); else setM(state.M); setZoom(1); state.dive = null; updateUI(); },
+        afterSourceChange: () => { setM(state.M); setZoom(1); state.dive = null; },
+      });
+    } catch (e) {
+      $('err').textContent = '3D isn’t available in this browser (' + (e.message || e) + ').';
+      track('3d-failed', { reason: String(e.message || e).slice(0, 60) });
+      return;
+    }
+  }
+  if (v === '3d' && state.mode !== 'anim') { // make sure there's a shape to show
+    if (state.strokes.some((s) => s.length)) animateDrawing('3d'); else loadShape(PRESETS['🦕 Dino']());
+  }
+  state.view = v;
+  document.body.classList.toggle('view-3d', v === '3d');
+  $('view2dBtn').classList.toggle('active', v === '2d');
+  $('view3dBtn').classList.toggle('active', v === '3d');
+  if (v === '3d') { view3d.activate(); session.used3d = true; } else if (view3d) view3d.deactivate();
+  state.dive = null;
+  setM(state.M);
+  setZoom(1);
+  track('view', { mode: v });
+}
+$('view2dBtn').addEventListener('click', () => setView('2d'));
+$('view3dBtn').addEventListener('click', () => setView('3d'));
 
 /* ---------------- freehand drawing ---------------- */
 canvas.addEventListener('pointerdown', (e) => {
@@ -686,12 +732,12 @@ function tick(now) {
     if (state.t >= 1) {
       state.t -= 1; state.loops++;
       if (opts.build) {
-        if (state.M >= N) setM(1), (state.loops = 0);
+        if (state.M >= maxTerms()) setM(1), (state.loops = 0);
         else setM(Math.max(state.M + 1, Math.ceil(state.M * 1.6)));
       }
     }
   }
-  drawFrame();
+  if (in3d()) view3d.render(); else drawFrame();
   requestAnimationFrame(tick);
 }
 

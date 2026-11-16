@@ -20,17 +20,35 @@
       <p>Any closed path = a sum of spinning arrows.</p>
     </header>
 
+    <section class="seg" role="tablist" aria-label="View">
+      <button id="view2dBtn" class="active" role="tab">2D</button>
+      <button id="view3dBtn" role="tab">3D</button>
+    </section>
+
+    <section class="only-3d">
+      <div class="seg">
+        <button id="srcRibbon" class="active">⏳ Time ribbon</button>
+        <button id="srcCurve">🧶 3D curve</button>
+      </div>
+      <p class="note" id="note3d"></p>
+      <label class="title">3D shapes</label>
+      <div class="presets" id="presets3d"></div>
+      <label class="title">Make your drawing 3D</label>
+      <div class="presets" id="lift3d"></div>
+      <p class="err" id="err3d"></p>
+    </section>
+
     <section class="row">
       <button id="drawBtn" title="Clear and draw a new shape">✏️ New drawing</button>
       <button id="animBtn" class="primary" title="Enter">▶ Animate</button>
     </section>
     <section class="row">
-      <button id="undoBtn">↶ Undo stroke</button>
+      <button id="undoBtn" class="only-2d">↶ Undo stroke</button>
       <button id="pauseBtn" title="Space">⏸ Pause</button>
     </section>
 
     <section>
-      <label class="title">Presets</label>
+      <label class="title"><span class="only-2d">Presets</span><span class="only-3d">2D presets (time ribbon)</span></label>
       <div class="presets" id="presets"></div>
     </section>
 
@@ -53,7 +71,16 @@
       <label><input type="checkbox" id="optOriginal"> Show original drawing</label>
       <label><input type="checkbox" id="optFollow" checked> Camera follows pen when zoomed</label>
       <label><input type="checkbox" id="optBuild"> Build up: more circles each loop</label>
-      <label><input type="checkbox" id="optAuto" checked> Auto-animate after drawing</label>
+      <label class="only-2d"><input type="checkbox" id="optAuto" checked> Auto-animate after drawing</label>
+      <label class="only-3d ribbon-only"><input type="checkbox" id="optWaves" checked> Show x/y waves on floor &amp; wall</label>
+      <label class="only-3d curve-only"><input type="checkbox" id="optShadow" checked> Show floor shadow</label>
+      <label class="only-3d"><input type="checkbox" id="optSpin"> Auto-rotate camera</label>
+    </section>
+
+    <section class="only-3d">
+      <label class="title">Import 3D points</label>
+      <textarea id="points3d" rows="3" placeholder="x y z per line, or JSON [[x,y,z], …]"></textarea>
+      <button id="points3dBtn">Use 3D points</button>
     </section>
 
     <section>
@@ -69,7 +96,7 @@
     </section>
 
     <footer>
-      <kbd>Space</kbd> pause · <kbd>Enter</kbd> animate · <kbd>Scroll</kbd> zoom (<kbd>Shift</kbd> faster) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>D</kbd> dive · <kbd>0</kbd> reset · <kbd>Z</kbd> undo
+      <kbd>Space</kbd> pause · <kbd>Enter</kbd> animate · <kbd>Scroll</kbd> zoom (<kbd>Shift</kbd> faster) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>D</kbd> dive · <kbd>0</kbd> reset · <kbd>Z</kbd> undo · <kbd>3</kbd> 2D/3D · <span class="only-3d">drag to orbit</span>
     </footer>
   </aside>
 

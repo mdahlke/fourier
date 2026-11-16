@@ -97,3 +97,21 @@ kbd { font: 11px ui-monospace, monospace; padding: 1px 5px; border-radius: 4px; 
 }
 .row.tight { display: flex; gap: 6px; margin-top: 8px; }
 .row.tight > :first-child { flex: 1; }
+
+/* 2D / 3D */
+.seg { display: flex; gap: 4px; padding: 3px; background: var(--btn); border: 1px solid var(--line); border-radius: 10px; }
+.seg button { flex: 1; background: transparent; border: none; padding: 6px 8px; border-radius: 7px; }
+.seg button:hover { background: var(--btn-hover); }
+.seg button.active { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+section.seg { margin-top: 14px; }
+.note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.only-3d { display: none; }
+body.view-3d .only-3d { display: revert; }
+body.view-3d section.only-3d { display: block; }
+body.view-3d .only-2d { display: none; }
+body.view-3d .toggles label.only-3d { display: flex; }
+body.view-3d:not(.src-curve) .curve-only, body.view-3d.src-curve .ribbon-only { display: none !important; }
+#c3d { position: fixed; inset: 0; display: none; touch-action: none; cursor: grab; }
+#c3d:active { cursor: grabbing; }
+body.view-3d #c3d { display: block; }
+body.view-3d #c, body.view-3d #hint { display: none; }
