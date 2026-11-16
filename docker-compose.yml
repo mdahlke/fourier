@@ -5,4 +5,22 @@ services:
     build: .
     expose:
       - "80"
+    environment:
+      # Fill these in Coolify's "Environment Variables" tab (see README → Analytics)
+      UMAMI_HOST: ${UMAMI_HOST:-}
+      UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+      UMAMI_SCRIPT_NAME: ${UMAMI_SCRIPT_NAME:-script.js}
+      UMAMI_DOMAINS: ${UMAMI_DOMAINS:-}
+    # --- hardening: non-root, read-only filesystem, no Linux capabilities, resource caps ---
+    read_only: true
+    tmpfs:
+      - /tmp:uid=101,gid=101,mode=0700
+      - /etc/nginx/conf.d:uid=101,gid=101,mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
     restart: unless-stopped

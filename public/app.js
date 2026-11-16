@@ -12,6 +12,8 @@ const CURVE_RES = 4096;    // resolution of the precomputed traced curve
 const ZOOM_CAP = 1e13;     // beyond this float64 precision runs out
 const ZOOM_PAST = 30;      // how far past "smallest circle fills the screen" you can keep zooming
 const $ = (id) => document.getElementById(id);
+// analytics.js defines window.track; no-op if it's missing or analytics is off
+const track = (name, data) => { try { window.track && window.track(name, data); } catch {} };
 
 const canvas = $('c');
 const ctx = canvas.getContext('2d');
@@ -173,7 +175,7 @@ function animateDrawing() {
   clearTimeout(state.autoTimer);
   state.paused = false;
   const polys = state.strokes.filter((s) => s.length > 0);
-  if (state.mode === 'draw' && polys.length) loadShape(polys);
+  if (state.mode === 'draw' && polys.length) { loadShape(polys); track('draw', { strokes: polys.length }); }
   else if (state.mode === 'anim') { state.t = 0; state.loops = 0; if (opts.build) setM(1); } // replay current shape
   updateUI();
 }
@@ -187,19 +189,36 @@ function startNewDrawing() {
 }
 
 /* ---------------- SVG import ---------------- */
-function sampleSvg(svgText, total = 3000) {
-  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
-  if (doc.querySelector('parsererror') || doc.documentElement.nodeName.toLowerCase() !== 'svg') throw new Error('Could not parse that SVG.');
-  doc.querySelectorAll('script, foreignObject, image, use').forEach((el) => el.remove());
-  for (const el of doc.querySelectorAll('*')) for (const a of [...el.attributes]) if (/^on/i.test(a.name)) el.removeAttribute(a.name);
+// Untrusted SVG is never inserted as-is. We rebuild a fresh SVG that contains only geometry
+// elements and geometric attributes (allowlist), so scripts, links, styles, external refs,
+// event handlers, <use>, <foreignObject>, animations etc. can't survive.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const MAX_SVG_BYTES = 5 * 1024 * 1024;
+const SAFE_TAGS = new Set(['svg', 'g', 'path', 'polygon', 'polyline', 'circle', 'ellipse', 'rect', 'line']);
+const SAFE_ATTRS = new Set(['d', 'points', 'x', 'y', 'width', 'height', 'cx', 'cy', 'r', 'rx', 'ry',
+  'x1', 'y1', 'x2', 'y2', 'transform', 'viewBox', 'preserveAspectRatio']);
+const SAFE_VALUE = /^[0-9eE.,+\-\s a-zA-Z()%]*$/; // numbers, path commands, transform functions
 
+function sanitizeSvg(srcRoot) {
+  const copy = (src, depth) => {
+    if (depth > 64) return null;
+    const tag = src.localName;
+    if (!SAFE_TAGS.has(tag) || (src.namespaceURI && src.namespaceURI !== SVG_NS)) return null;
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const a of src.attributes) {
+      if (!a.namespaceURI && SAFE_ATTRS.has(a.name) && a.value.length < 1e6 && SAFE_VALUE.test(a.value)) el.setAttribute(a.name, a.value);
+    }
+    for (const child of src.children) { const c = copy(child, depth + 1); if (c) el.appendChild(c); }
+    return el;
+  };
+  return copy(srcRoot, 0);
+}
+
+function sampleSvgElement(svg, total = 3000) {
   const host = $('svgHost');
-  host.innerHTML = '';
-  const svg = document.importNode(doc.documentElement, true);
-  host.appendChild(svg);
+  host.replaceChildren(svg);
   try {
-    const els = [...svg.querySelectorAll('path, polygon, polyline, circle, ellipse, rect, line')]
-      .filter((el) => !el.closest('defs, clipPath, mask, symbol, marker, pattern'));
+    const els = [...svg.querySelectorAll('path, polygon, polyline, circle, ellipse, rect, line')];
     const lens = els.map((el) => { try { return el.getTotalLength(); } catch { return 0; } });
     const sum = lens.reduce((a, b) => a + b, 0);
     if (!(sum > 0)) throw new Error('No drawable paths found in that SVG.');
@@ -219,23 +238,42 @@ function sampleSvg(svgText, total = 3000) {
     });
     return polys;
   } finally {
-    host.innerHTML = '';
+    host.replaceChildren();
   }
 }
 
-function loadSvgText(text) {
+function sampleSvg(svgText, total) {
+  if (svgText.length > MAX_SVG_BYTES) throw new Error('That SVG is too large (max 5 MB).');
+  const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+  if (doc.querySelector('parsererror') || doc.documentElement.localName !== 'svg') throw new Error('Could not parse that SVG.');
+  const svg = sanitizeSvg(doc.documentElement);
+  if (!svg) throw new Error('Could not parse that SVG.');
+  return sampleSvgElement(svg, total);
+}
+
+function samplePathData(d, total) {
+  const svg = document.createElementNS(SVG_NS, 'svg'), path = document.createElementNS(SVG_NS, 'path');
+  path.setAttribute('d', d);
+  svg.appendChild(path);
+  return sampleSvgElement(svg, total);
+}
+
+function loadSvgText(text, source) {
   const err = $('err');
   err.textContent = '';
   text = text.trim();
   if (!text) return;
-  if (!/<svg[\s>]/i.test(text)) {
-    const d = text.replace(/^d\s*=\s*["']?|["']$/g, '').replace(/"/g, '');
-    text = `<svg xmlns="http://www.w3.org/2000/svg"><path d="${d}"/></svg>`;
-  }
   try {
-    const polys = sampleSvg(text);
+    let polys;
+    if (/<svg[\s>]/i.test(text)) polys = sampleSvg(text);
+    else {
+      const d = text.replace(/^d\s*=\s*["']?|["']$/g, '');
+      if (d.length > MAX_SVG_BYTES || !SAFE_VALUE.test(d)) throw new Error('That doesn\'t look like SVG path data.');
+      polys = samplePathData(d);
+    }
     if (!loadShape(polys)) throw new Error('That path has no length.');
     state.strokes = [];
+    track('svg-import', { source });
   } catch (e) {
     err.textContent = e.message || String(e);
   }
@@ -307,7 +345,7 @@ function updateUI() {
 $('terms').addEventListener('input', (e) => setM(termsFromSlider(+e.target.value)));
 $('speed').addEventListener('input', (e) => setSpeed(+e.target.value));
 $('zoom').addEventListener('input', (e) => { state.dive = null; setZoom(zoomFromSlider(+e.target.value)); });
-$('diveBtn').addEventListener('click', () => dive(smallestCircleZoom()));
+$('diveBtn').addEventListener('click', () => { dive(smallestCircleZoom()); track('dive'); });
 $('zoomResetBtn').addEventListener('click', () => dive(1));
 // smooth logarithmic zoom animation
 function dive(target) {
@@ -320,6 +358,7 @@ $('animBtn').addEventListener('click', animateDrawing);
 $('undoBtn').addEventListener('click', undo);
 $('pauseBtn').addEventListener('click', () => { state.paused = !state.paused; updateUI(); });
 $('pngBtn').addEventListener('click', () => {
+  track('save-png');
   canvas.toBlob((b) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b); a.download = 'fourier-drawing.png'; a.click();
@@ -335,16 +374,19 @@ $('optBuild').addEventListener('change', (e) => { opts.build = e.target.checked;
 
 $('svgFile').addEventListener('change', async (e) => {
   const f = e.target.files[0];
-  if (f) loadSvgText(await f.text());
+  if (f) {
+    if (f.size > MAX_SVG_BYTES) { $('err').textContent = 'That SVG is too large (max 5 MB).'; e.target.value = ''; return; }
+    loadSvgText(await f.text(), 'file');
+  }
   e.target.value = '';
 });
-$('pathBtn').addEventListener('click', () => loadSvgText($('pathInput').value));
+$('pathBtn').addEventListener('click', () => loadSvgText($('pathInput').value, 'paste'));
 
 const presetBox = $('presets');
 for (const [name, fn] of Object.entries(PRESETS)) {
   const b = document.createElement('button');
   b.textContent = name;
-  b.addEventListener('click', () => { $('err').textContent = ''; try { loadShape(fn()); state.strokes = []; } catch (e) { $('err').textContent = e.message; } });
+  b.addEventListener('click', () => { $('err').textContent = ''; try { loadShape(fn()); state.strokes = []; track('preset', { name: name.replace(/^\S+\s/, '') }); } catch (e) { $('err').textContent = e.message; } });
   presetBox.appendChild(b);
 }
 

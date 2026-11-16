@@ -1,0 +1,70 @@
+# Hardened config for a static site running behind Coolify's reverse proxy (Traefik), which
+# terminates TLS. ${UMAMI_*} placeholders are filled from env vars when the container starts.
+
+# per-visitor rate limit (a full page load is ~6 requests)
+limit_req_zone $binary_remote_addr zone=perip:10m rate=20r/s;
+
+server {
+    listen 80 default_server;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    server_tokens off;
+    autoindex off;
+
+    # this site never accepts uploads or form posts
+    client_max_body_size 1k;
+    client_body_timeout 10s;
+    client_header_timeout 10s;
+    keepalive_timeout 15s;
+    send_timeout 10s;
+    large_client_header_buffers 4 8k;
+
+    # real visitor IP from the proxy (only trusted from private Docker networks)
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    limit_req zone=perip burst=40 nodelay;
+    limit_req_status 429;
+
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml;
+
+    # --- security headers ---
+    # CSP: only our own files run; the analytics host (if configured) may serve its script and receive events.
+    add_header Content-Security-Policy "default-src 'none'; script-src 'self' ${UMAMI_HOST}; connect-src 'self' ${UMAMI_HOST}; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=()" always;
+    add_header Cross-Origin-Opener-Policy "same-origin" always;
+    add_header Cross-Origin-Resource-Policy "same-origin" always;
+    add_header Cache-Control "no-cache" always;
+
+    # read-only site: only GET/HEAD
+    if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # analytics settings for the browser (empty values = analytics off)
+    location = /config.js {
+        default_type application/javascript;
+        return 200 'window.__ANALYTICS__={host:"${UMAMI_HOST}",id:"${UMAMI_WEBSITE_ID}",script:"${UMAMI_SCRIPT_NAME}",domains:"${UMAMI_DOMAINS}"};\n';
+    }
+
+    # never serve dotfiles (.git, .env, ...)
+    location ~ /\. { return 404; }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
