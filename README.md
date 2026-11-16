@@ -55,9 +55,28 @@ login-protected dashboard. It is cookieless and does not store IP addresses, so 
 
 Leave the variables empty and analytics is completely off (that's the default for local runs).
 
-**What you'll see:** visitors, page views, referrers, countries, browsers/devices, plus these custom
-events: `draw` (animated their own drawing, with stroke count), `preset` (which one), `svg-import`
-(file/paste), `dive` (zoomed to the smallest circle), `save-png`. Drawings themselves are never sent.
+**What you'll see:** visitors, page views, referrers, countries, browsers/devices, plus custom events
+(Umami → Websites → Fourier → Events; click an event to break it down by its properties).
+Drawings themselves are never sent.
+
+| Event | When | Properties |
+|---|---|---|
+| `first-stroke` | visitor starts drawing (once per visit) — *did they try it at all?* | `input` (mouse/touch/pen) |
+| `draw` | their drawing gets animated | `strokes`, `via` (auto/button/key), `count` (nth drawing this visit) |
+| `replay` | Animate pressed on the current shape | `via` |
+| `new-drawing` / `undo` | cleared the canvas / undid a stroke (undo once per visit) | — |
+| `preset` | picked a preset | `name` |
+| `svg-import` / `svg-import-failed` | imported an SVG / it failed | `source` (file/paste), `reason` |
+| `circles` | settled on a circle count (debounced) | `count` (bucket) |
+| `speed` | settled on a speed (debounced) | `secondsPerLoop` |
+| `zoom` | finished zooming manually (debounced) | `level` (power of 10), `via` (wheel/slider/keys) |
+| `dive` / `zoom-reset` | dove to the smallest circle / zoomed back out | `via`, `circles`, `depth` |
+| `pause` | paused the animation | `via` (button/key) |
+| `toggle` | changed a checkbox | `option`, `on` |
+| `shortcut` | first use of each keyboard shortcut per visit | `key` |
+| `panel` | opened/closed the controls panel | `open`, `screen` (wide/narrow) |
+| `save-png` | saved an image | `mode`, `zoomed` |
+| `session-summary` | when the visitor leaves | `duration`, `drawings`, `presets`, `imports`, `dives`, `pngs`, `maxCircles`, `maxZoom`, `input` |
 
 ## Security
 

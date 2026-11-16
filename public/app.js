@@ -15,6 +15,32 @@ const $ = (id) => document.getElementById(id);
 // analytics.js defines window.track; no-op if it's missing or analytics is off
 const track = (name, data) => { try { window.track && window.track(name, data); } catch {} };
 
+/* ---------------- analytics events ----------------
+ * Goal: learn how people actually use the app, without noise or personal data.
+ * - continuous controls (sliders, zoom) report once the user settles (debounced)
+ * - "first time" events fire once per visit
+ * - one session-summary when the visitor leaves (sent with keepalive by Umami)
+ */
+const sent = new Set();
+const trackOnce = (name, data, key = name) => { if (!sent.has(key)) { sent.add(key); track(name, data); } };
+const timers = {};
+const trackSettled = (name, getData, ms = 1500) => { clearTimeout(timers[name]); timers[name] = setTimeout(() => track(name, getData()), ms); };
+const bucket = (v, edges) => { for (const [max, label] of edges) if (v <= max) return label; return edges[edges.length - 1][1]; };
+const circlesBucket = (m) => bucket(m, [[10, '1-10'], [50, '11-50'], [250, '51-250'], [1000, '251-1000'], [Infinity, '1001-2048']]);
+const zoomBucket = (z) => z < 10 ? '1-10×' : '10^' + Math.floor(Math.log10(z)) + '×';
+const session = { start: Date.now(), drawings: 0, presets: 0, imports: 0, dives: 0, pngs: 0, maxCircles: 0, maxZoom: 1, touch: false };
+function sendSummary() {
+  const secs = (Date.now() - session.start) / 1000;
+  trackOnce('session-summary', {
+    duration: bucket(secs, [[10, '<10s'], [30, '10-30s'], [120, '30s-2m'], [600, '2-10m'], [Infinity, '10m+']]),
+    drawings: session.drawings, presets: session.presets, imports: session.imports, dives: session.dives, pngs: session.pngs,
+    maxCircles: circlesBucket(session.maxCircles || 0), maxZoom: zoomBucket(session.maxZoom),
+    input: session.touch ? 'touch' : 'mouse',
+  });
+}
+addEventListener('pagehide', sendSummary);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') sendSummary(); });
+
 const canvas = $('c');
 const ctx = canvas.getContext('2d');
 let W = 0, H = 0, DPR = 1;
@@ -171,12 +197,18 @@ function loadShape(polys) {
   return true;
 }
 
-function animateDrawing() {
+function animateDrawing(via = 'button') {
   clearTimeout(state.autoTimer);
   state.paused = false;
   const polys = state.strokes.filter((s) => s.length > 0);
-  if (state.mode === 'draw' && polys.length) { loadShape(polys); track('draw', { strokes: polys.length }); }
-  else if (state.mode === 'anim') { state.t = 0; state.loops = 0; if (opts.build) setM(1); } // replay current shape
+  if (state.mode === 'draw' && polys.length) {
+    loadShape(polys);
+    session.drawings++;
+    track('draw', { strokes: polys.length, via, count: session.drawings });
+  } else if (state.mode === 'anim') { // replay current shape
+    state.t = 0; state.loops = 0; if (opts.build) setM(1);
+    track('replay', { via });
+  }
   updateUI();
 }
 
@@ -273,9 +305,11 @@ function loadSvgText(text, source) {
     }
     if (!loadShape(polys)) throw new Error('That path has no length.');
     state.strokes = [];
+    session.imports++;
     track('svg-import', { source });
   } catch (e) {
     err.textContent = e.message || String(e);
+    track('svg-import-failed', { source, reason: String(e.message || e).slice(0, 60) });
   }
 }
 
@@ -342,35 +376,63 @@ function updateUI() {
   $('pauseBtn').textContent = state.paused ? '▶ Resume' : '⏸ Pause';
 }
 
-$('terms').addEventListener('input', (e) => setM(termsFromSlider(+e.target.value)));
-$('speed').addEventListener('input', (e) => setSpeed(+e.target.value));
-$('zoom').addEventListener('input', (e) => { state.dive = null; setZoom(zoomFromSlider(+e.target.value)); });
-$('diveBtn').addEventListener('click', () => { dive(smallestCircleZoom()); track('dive'); });
-$('zoomResetBtn').addEventListener('click', () => dive(1));
+$('terms').addEventListener('input', (e) => {
+  setM(termsFromSlider(+e.target.value));
+  session.maxCircles = Math.max(session.maxCircles, state.M);
+  trackSettled('circles', () => ({ count: circlesBucket(state.M) }));
+});
+$('speed').addEventListener('input', (e) => {
+  setSpeed(+e.target.value);
+  trackSettled('speed', () => ({ secondsPerLoop: Math.round(1 / state.speed) }));
+});
+$('zoom').addEventListener('input', (e) => { state.dive = null; setZoom(zoomFromSlider(+e.target.value)); userZoomed('slider'); });
+// manual zooming (slider / wheel / keys) → one event once they stop
+function userZoomed(via) {
+  session.maxZoom = Math.max(session.maxZoom, state.zoom);
+  trackSettled('zoom', () => ({ level: zoomBucket(state.zoom), via }), 2000);
+}
+$('diveBtn').addEventListener('click', () => userDive('button'));
+$('zoomResetBtn').addEventListener('click', () => { dive(1); track('zoom-reset'); });
+function userDive(via) {
+  const z = smallestCircleZoom();
+  dive(z);
+  session.dives++;
+  session.maxZoom = Math.max(session.maxZoom, z);
+  track('dive', { via, circles: circlesBucket(state.M), depth: zoomBucket(z) });
+}
 // smooth logarithmic zoom animation
 function dive(target) {
   if (target > 1) { opts.follow = true; $('optFollow').checked = true; }
   const from = Math.log(state.zoom), to = Math.log(target);
   state.dive = { from, to, start: performance.now(), dur: Math.min(9000, 800 + Math.abs(to - from) * 300) };
 }
-$('drawBtn').addEventListener('click', startNewDrawing);
-$('animBtn').addEventListener('click', animateDrawing);
-$('undoBtn').addEventListener('click', undo);
-$('pauseBtn').addEventListener('click', () => { state.paused = !state.paused; updateUI(); });
+$('drawBtn').addEventListener('click', () => { startNewDrawing(); track('new-drawing'); });
+$('animBtn').addEventListener('click', () => animateDrawing('button'));
+$('undoBtn').addEventListener('click', () => { undo(); trackOnce('undo'); });
+$('pauseBtn').addEventListener('click', () => togglePause('button'));
+function togglePause(via) {
+  state.paused = !state.paused;
+  updateUI();
+  if (state.paused) track('pause', { via });
+}
 $('pngBtn').addEventListener('click', () => {
-  track('save-png');
+  session.pngs++;
+  track('save-png', { mode: state.mode === 'anim' ? 'animation' : 'drawing', zoomed: state.zoom > 1.5 });
   canvas.toBlob((b) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(b); a.download = 'fourier-drawing.png'; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 });
-$('panelToggle').addEventListener('click', () => document.body.classList.toggle('panel-closed'));
+$('panelToggle').addEventListener('click', () => {
+  document.body.classList.toggle('panel-closed');
+  track('panel', { open: panelOpen(), screen: wide() ? 'wide' : 'narrow' });
+});
 
-const bindOpt = (id, key) => $(id).addEventListener('change', (e) => { opts[key] = e.target.checked; });
+const bindOpt = (id, key) => $(id).addEventListener('change', (e) => { opts[key] = e.target.checked; track('toggle', { option: key, on: e.target.checked }); });
 bindOpt('optCircles', 'circles'); bindOpt('optArrows', 'arrows'); bindOpt('optOriginal', 'original');
 bindOpt('optFollow', 'follow'); bindOpt('optAuto', 'auto');
-$('optBuild').addEventListener('change', (e) => { opts.build = e.target.checked; if (opts.build && state.mode === 'anim') { setM(1); state.t = 0; state.loops = 0; } });
+$('optBuild').addEventListener('change', (e) => { opts.build = e.target.checked; track('toggle', { option: 'build', on: opts.build }); if (opts.build && state.mode === 'anim') { setM(1); state.t = 0; state.loops = 0; } });
 
 $('svgFile').addEventListener('change', async (e) => {
   const f = e.target.files[0];
@@ -386,7 +448,7 @@ const presetBox = $('presets');
 for (const [name, fn] of Object.entries(PRESETS)) {
   const b = document.createElement('button');
   b.textContent = name;
-  b.addEventListener('click', () => { $('err').textContent = ''; try { loadShape(fn()); state.strokes = []; track('preset', { name: name.replace(/^\S+\s/, '') }); } catch (e) { $('err').textContent = e.message; } });
+  b.addEventListener('click', () => { $('err').textContent = ''; try { loadShape(fn()); state.strokes = []; session.presets++; track('preset', { name: name.replace(/^\S+\s/, '') }); } catch (e) { $('err').textContent = e.message; } });
   presetBox.appendChild(b);
 }
 
@@ -399,19 +461,23 @@ function undo() {
 
 window.addEventListener('keydown', (e) => {
   if (e.target.closest('textarea, input[type=file]')) return;
-  if (e.code === 'Space') { e.preventDefault(); state.paused = !state.paused; updateUI(); }
-  else if (e.key === 'Enter') animateDrawing();
-  else if (e.key === 'z' || e.key === 'Z') undo();
-  else if (e.key === '+' || e.key === '=') { state.dive = null; setZoom(state.zoom * 2); }
-  else if (e.key === '-' || e.key === '_') { state.dive = null; setZoom(state.zoom / 2); }
-  else if (e.key === 'd' || e.key === 'D') dive(smallestCircleZoom());
-  else if (e.key === '0') dive(1);
+  const k = e.code === 'Space' ? 'space' : e.key.toLowerCase();
+  if (k === 'space') { e.preventDefault(); togglePause('key'); }
+  else if (k === 'enter') animateDrawing('key');
+  else if (k === 'z') undo();
+  else if (k === '+' || k === '=') { state.dive = null; setZoom(state.zoom * 2); userZoomed('keys'); }
+  else if (k === '-' || k === '_') { state.dive = null; setZoom(state.zoom / 2); userZoomed('keys'); }
+  else if (k === 'd') userDive('key');
+  else if (k === '0') dive(1);
+  else return;
+  trackOnce('shortcut', { key: k }, 'shortcut:' + k); // which shortcuts people discover (once each per visit)
 });
 
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   state.dive = null;
   setZoom(state.zoom * Math.exp(-e.deltaY * (e.shiftKey ? 0.01 : 0.003)));
+  userZoomed('wheel');
 }, { passive: false });
 
 /* ---------------- freehand drawing ---------------- */
@@ -420,6 +486,8 @@ canvas.addEventListener('pointerdown', (e) => {
   clearTimeout(state.autoTimer);
   if (state.mode !== 'draw') { state.mode = 'draw'; state.strokes = []; }
   canvas.setPointerCapture(e.pointerId);
+  if (e.pointerType !== 'mouse') session.touch = true;
+  trackOnce('first-stroke', { input: e.pointerType || 'mouse' }); // did they try drawing at all?
   state.drawing = [{ x: e.clientX, y: e.clientY }];
   state.strokes.push(state.drawing);
   updateUI();
@@ -435,7 +503,7 @@ canvas.addEventListener('pointermove', (e) => {
 const endStroke = () => {
   if (!state.drawing) return;
   state.drawing = null;
-  if (opts.auto) state.autoTimer = setTimeout(animateDrawing, 900);
+  if (opts.auto) state.autoTimer = setTimeout(() => animateDrawing('auto'), 900);
 };
 canvas.addEventListener('pointerup', endStroke);
 canvas.addEventListener('pointercancel', endStroke);
