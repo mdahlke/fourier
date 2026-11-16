@@ -67,7 +67,8 @@ events: `draw` (animated their own drawing, with stroke count), `preset` (which 
   `no-new-privileges`, and memory/CPU/process limits.
 - Only `GET`/`HEAD` are accepted (others → 405); dotfiles always 404; no directory listings; server
   version hidden; small request size limits and short timeouts.
-- Per-visitor rate limit (20 req/s, burst 40 → 429), using the real client IP from the proxy.
+- Per-visitor rate limit (20 req/s, burst 40 → 429), keyed on Cloudflare's `CF-Connecting-IP` (validated)
+  or the proxy-forwarded IP; access logs record the real visitor IP.
 - Strict headers: Content-Security-Policy (only our own scripts + your analytics host; no inline code,
   no framing), HSTS, `nosniff`, `X-Frame-Options: DENY`, Referrer-Policy, Permissions-Policy, COOP/CORP.
 - SVG import is rebuilt from an allowlist of geometry elements/attributes, so scripts, event handlers,
@@ -84,7 +85,10 @@ events: `draw` (animated their own drawing, with stroke count), `preset` (which 
 - [ ] OS: automatic security updates (`unattended-upgrades`).
 - [ ] GitHub: 2FA on your account; Coolify should use a read-only deploy key / GitHub App.
 - [ ] Backups of the Umami database (Coolify → the Umami service's Postgres → Backups).
-- [ ] Optional: put the domain behind Cloudflare (proxied) for DDoS protection and to hide your server IP.
+- [x] Domain is behind Cloudflare (proxied) for DDoS protection and to hide your server IP.
+- [ ] Firewall ports `80`/`443` so only [Cloudflare's IP ranges](https://www.cloudflare.com/ips/) can reach them.
+      Otherwise someone who finds your server IP can bypass Cloudflare (and fake `CF-Connecting-IP`).
+- [ ] Turn off Cloudflare's auto-injected Web Analytics (the CSP blocks it anyway; Umami replaces it).
 - [ ] Check your headers at https://securityheaders.com after deploying.
 
 ## How it works

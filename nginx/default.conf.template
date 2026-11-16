@@ -1,8 +1,19 @@
 # Hardened config for a static site running behind Coolify's reverse proxy (Traefik), which
 # terminates TLS. ${UMAMI_*} placeholders are filled from env vars when the container starts.
 
+# Who is the visitor? Behind Cloudflare, every request arrives from a Cloudflare edge IP (shared by
+# many visitors), so use Cloudflare's CF-Connecting-IP when it's present and looks like an IP.
+# Otherwise fall back to the connecting address (set from X-Forwarded-For below).
+map $http_cf_connecting_ip $visitor_ip {
+    "~^(?<cfip>[0-9A-Fa-f:.]{3,45})$" $cfip;
+    default $remote_addr;
+}
+
 # per-visitor rate limit (a full page load is ~6 requests)
-limit_req_zone $binary_remote_addr zone=perip:10m rate=20r/s;
+limit_req_zone $visitor_ip zone=perip:10m rate=20r/s;
+
+# access log with the real visitor IP
+log_format visitor '$visitor_ip - [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent"';
 
 server {
     listen 80 default_server;
@@ -30,6 +41,7 @@ server {
 
     limit_req zone=perip burst=40 nodelay;
     limit_req_status 429;
+    access_log /dev/stdout visitor;
 
     gzip on;
     gzip_types text/css application/javascript image/svg+xml;
