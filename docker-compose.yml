@@ -1,9 +1,8 @@
+# Used by Coolify (and as the base for local runs).
+# No host ports here: Coolify's proxy routes your domain to the container's port 80.
 services:
   fourier:
     build: .
-    ports:
-      - "${PORT:-8080}:80"
-    volumes:
-      # live-edit: changes in public/ show up on browser refresh, no rebuild needed
-      - ./public:/usr/share/nginx/html:ro
+    expose:
+      - "80"
     restart: unless-stopped

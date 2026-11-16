@@ -1,0 +1,9 @@
+# Local-only additions. `docker compose up` loads this file automatically;
+# Coolify passes `-f docker-compose.yml` explicitly, so it never sees it.
+services:
+  fourier:
+    ports:
+      - "${PORT:-8080}:80"
+    volumes:
+      # live-edit: changes in public/ show up on browser refresh, no rebuild needed
+      - ./public:/usr/share/nginx/html:ro
