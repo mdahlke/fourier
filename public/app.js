@@ -10,7 +10,8 @@
 const N = 2048;            // samples along the path == number of available circles
 const CURVE_RES = 4096;    // resolution of the precomputed traced curve
 const ZOOM_CAP = 1e13;     // beyond this float64 precision runs out
-const ZOOM_PAST = 30;      // how far past "smallest circle fills the screen" you can keep zooming
+const ZOOM_PAST = 30;
+const ZOOM_MIN = 1 / 3;     // how far you can zoom out (3× smaller than the default fit)      // how far past "smallest circle fills the screen" you can keep zooming
 const $ = (id) => document.getElementById(id);
 // analytics.js defines window.track; no-op if it's missing or analytics is off
 const track = (name, data) => { try { window.track && window.track(name, data); } catch {} };
@@ -27,7 +28,7 @@ const timers = {};
 const trackSettled = (name, getData, ms = 1500) => { clearTimeout(timers[name]); timers[name] = setTimeout(() => track(name, getData()), ms); };
 const bucket = (v, edges) => { for (const [max, label] of edges) if (v <= max) return label; return edges[edges.length - 1][1]; };
 const circlesBucket = (m) => bucket(m, [[10, '1-10'], [50, '11-50'], [250, '51-250'], [1000, '251-1000'], [Infinity, '1001-2048']]);
-const zoomBucket = (z) => z < 10 ? '1-10×' : '10^' + Math.floor(Math.log10(z)) + '×';
+const zoomBucket = (z) => z < 1 ? '<1×' : z < 10 ? '1-10×' : '10^' + Math.floor(Math.log10(z)) + '×';
 const session = { start: Date.now(), drawings: 0, presets: 0, imports: 0, dives: 0, pngs: 0, maxCircles: 0, maxZoom: 1, touch: false, used3d: false };
 function sendSummary() {
   const secs = (Date.now() - session.start) / 1000;
@@ -356,9 +357,10 @@ function smallestCircleZoom() {
   return Math.min(ZOOM_CAP, Math.max(50, (0.38 * Math.min(v.w, v.h)) / (Math.max(r, 1e-300) * baseScale())));
 }
 const maxZoom = () => (in3d() ? view3d.maxZoom() : Math.min(ZOOM_CAP, smallestCircleZoom() * ZOOM_PAST));
-const zoomFromSlider = (v) => Math.pow(maxZoom(), v / 1000);
-const sliderFromZoom = (z) => Math.round((Math.log(z) / Math.log(maxZoom())) * 1000);
-const fmtZoom = (z) => z < 10 ? z.toFixed(1) + '×' : z < 1e6 ? Math.round(z).toLocaleString() + '×' : z.toExponential(1).replace('e+', '·10^') + '×';
+// slider is logarithmic from ZOOM_MIN to maxZoom()
+const zoomFromSlider = (v) => ZOOM_MIN * Math.pow(maxZoom() / ZOOM_MIN, v / 1000);
+const sliderFromZoom = (z) => Math.round((Math.log(z / ZOOM_MIN) / Math.log(maxZoom() / ZOOM_MIN)) * 1000);
+const fmtZoom = (z) => z < 0.995 ? z.toFixed(2) + '×' : z < 10 ? z.toFixed(1) + '×' : z < 1e6 ? Math.round(z).toLocaleString() + '×' : z.toExponential(1).replace('e+', '·10^') + '×';
 
 function setM(m) {
   state.M = Math.min(maxTerms(), Math.max(1, m));
@@ -368,7 +370,7 @@ function setM(m) {
   if (state.coeffs) setZoom(state.zoom);
 }
 function setZoom(z) {
-  state.zoom = Math.min(maxZoom(), Math.max(1, z));
+  state.zoom = Math.min(maxZoom(), Math.max(ZOOM_MIN, z));
   $('zoom').value = sliderFromZoom(state.zoom);
   $('zoomOut').textContent = fmtZoom(state.zoom);
 }
