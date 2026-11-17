@@ -115,3 +115,10 @@ body.view-3d:not(.src-curve) .curve-only, body.view-3d.src-curve .ribbon-only { 
 #c3d:active { cursor: grabbing; }
 body.view-3d #c3d { display: block; }
 body.view-3d #c, body.view-3d #hint { display: none; }
+
+/* draw-the-waves mode */
+#waveDrawBtn { width: 100%; margin-top: 10px; }
+.wave-only { display: none; margin-top: 10px; }
+body.wave-draw .wave-only { display: grid; grid-template-columns: 1fr 1fr; }
+body.wave-draw .wave-hide { display: none; }
+.wave-only #waveApplyBtn { grid-column: span 2; }

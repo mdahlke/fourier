@@ -8,6 +8,7 @@ Draw anything and watch a chain of spinning arrows (a Fourier series / epicycles
 - "Build up" mode adds circles each loop so you can see the approximation improve
 - **3D mode** (button or `3` key), loaded only when used:
   - **Time ribbon**: your 2D shape with time as depth; floor shows x(t), side wall shows y(t)
+  - **Draw on the floor & wall**: sketch x(t) on the floor and y(t) on the wall separately and watch the 2D shape they make, then animate it
   - **3D curve**: real 3D closed curves drawn by spinning *tilted ellipses* — presets (trefoil, torus
     knot, coil, sphere figure-8, baseball seam, Lissajous), "make your drawing 3D" (wave, cylinder,
     sphere, saddle), or import your own `x y z` points
@@ -87,6 +88,7 @@ Drawings themselves are never sent.
 | `3d-source` | switched time ribbon ↔ 3D curve | `source` |
 | `3d-preset` / `3d-from-drawing` | picked a 3D shape / turned their drawing into 3D | `name` / `kind` |
 | `3d-import` / `3d-import-failed` | imported 3D points / it failed | `points` (bucket) / `reason` |
+| `3d-wave-draw` / `3d-wave-shape` | opened floor & wall drawing / turned it into a shape | — / `edited` (floor, wall, both, none) |
 | `3d-orbit` | first camera drag (once per visit) | — |
 | `3d-failed` | 3D couldn't start (e.g. no WebGL) | `reason` |
 | `session-summary` | when the visitor leaves | `duration`, `drawings`, `presets`, `imports`, `dives`, `pngs`, `maxCircles`, `maxZoom`, `input`, `used3d` |

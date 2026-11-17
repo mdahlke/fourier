@@ -185,8 +185,9 @@ function sampleRange(t0, t1, steps, M) {
 }
 
 /* ---------------- loading shapes ---------------- */
-function loadShape(polys) {
-  const pts = resample(polys, N);
+// timed: polys is one list of exactly N points already evenly spaced in time (keep that timing)
+function loadShape(polys, timed = false) {
+  const pts = timed ? polys[0] : resample(polys, N);
   if (!pts) return false;
   const norm = normalize(pts);
   state.original = norm;
@@ -504,6 +505,7 @@ async function setView(v) {
         colors: () => colors,
         ensureCurve: () => { if (state.curveDirty) buildCurve(); },
         afterLoad: () => { if (opts.build) setM(1); else setM(state.M); setZoom(1); state.dive = null; updateUI(); },
+        loadTimed: (pts) => { clearTimeout(state.autoTimer); state.strokes = []; state.paused = false; loadShape([pts], true); },
         afterSourceChange: () => { setM(state.M); setZoom(1); state.dive = null; },
       });
     } catch (e) {

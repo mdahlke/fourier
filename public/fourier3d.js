@@ -127,6 +127,16 @@ export function createView3D(api) {
   tipMesh.renderOrder = 10;
   scene.add(tipMesh);
 
+  // drawable floor & side wall for "draw the waves" mode (scene coords at zoom 1: ribbon spans z ∈ [-LEN/2, LEN/2])
+  const planeMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false });
+  const floorMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.5, RIBBON_LEN), planeMat);
+  floorMesh.rotation.x = -Math.PI / 2;
+  floorMesh.position.set(0, FLOOR_Y, 0);
+  const wallMesh = new THREE.Mesh(new THREE.PlaneGeometry(RIBBON_LEN, 0.65 - FLOOR_Y), planeMat);
+  wallMesh.rotation.y = Math.PI / 2;
+  wallMesh.position.set(WALL_X, (0.65 + FLOOR_Y) / 2, 0);
+  for (const m of [floorMesh, wallMesh]) { m.visible = false; m.renderOrder = -1; scene.add(m); }
+
   function parseColor(str) {
     const m = /rgba?\(([^)]+)\)/.exec(str);
     if (m) {
@@ -143,6 +153,7 @@ export function createView3D(api) {
     set('trailDim', col.trail, 0.3); set('wave', col.ink, 0.85); set('trail', col.trail, 1);
     set('circle', col.circle, Math.min(1, parseColor(col.circle).a * 1.3)); set('arrow', col.arrow);
     tipMesh.material.color.copy(parseColor(col.trail).c);
+    planeMat.color.copy(parseColor(col.trail).c);
   }
 
   function resize() {
@@ -299,6 +310,7 @@ export function createView3D(api) {
     const t = state.t;
     controls.autoRotate = opts3.spin;
     controls.update();
+    if (wd.on) return renderWaves();
 
     // ---- chain terms ----
     let M;
@@ -437,6 +449,120 @@ export function createView3D(api) {
     renderer.render(scene, camera);
   }
 
+  /* ---------- draw-the-waves mode ---------- */
+  // Drag on the floor to draw x(t), on the side wall to draw y(t); the front plane shows the 2D shape
+  // those two waves make together. Time runs from the front (t = 0) to the back (t = 1).
+  const WB = 480;                                     // time bins
+  const wd = { on: false, xs: new Float64Array(WB), ys: new Float64Array(WB), drag: null, edited: { floor: false, wall: false } };
+  const binZ = (i) => RIBBON_LEN / 2 - (i / WB) * RIBBON_LEN; // scene z of bin i
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), hit = new THREE.Vector3();
+  const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -FLOOR_Y);
+  const wallPlane = new THREE.Plane(new THREE.Vector3(1, 0, 0), -WALL_X);
+
+  function wavesFromShape() {
+    const cv = state.curve, R = CURVE_RES;
+    for (let i = 0; i < WB; i++) { const idx = Math.round((i / WB) * R) % R; wd.xs[i] = cv[2 * idx]; wd.ys[i] = -cv[2 * idx + 1]; }
+    wd.edited.floor = wd.edited.wall = false;
+  }
+  function setWaveMode(on) {
+    if (on === wd.on) return;
+    wd.on = on; wd.drag = null;
+    document.body.classList.toggle('wave-draw', on);
+    floorMesh.visible = wallMesh.visible = on;
+    canvas.style.cursor = '';
+    if (on) {
+      if (view.source !== 'ribbon') setSource('ribbon', true);
+      if (state.curveDirty) api.ensureCurve();
+      wavesFromShape();
+      api.afterSourceChange();     // back to zoom 1
+      opts3.spin = false; $('optSpin').checked = false;
+      resetCamera();
+      camera.position.setLength(3.8);   // step back so the whole floor & wall fit
+      api.track('3d-wave-draw');
+    }
+    noteText();
+  }
+  function castPointer(e) {
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+  }
+  function paint(e) {
+    const d = wd.drag;
+    if (!ray.ray.intersectPlane(d.plane === 'floor' ? floorPlane : wallPlane, hit)) return;
+    const s = Math.min(1, Math.max(0, (RIBBON_LEN / 2 - hit.z) / RIBBON_LEN));
+    const i = Math.min(WB - 1, Math.round(s * (WB - 1)));
+    const arr = d.plane === 'floor' ? wd.xs : wd.ys;
+    const v = d.plane === 'floor' ? Math.min(0.75, Math.max(-0.75, hit.x)) : Math.min(0.65, Math.max(FLOOR_Y, hit.y));
+    // fill every bin between the previous point and this one so fast strokes leave no gaps
+    if (d.i == null) arr[i] = v;
+    else { const n = Math.abs(i - d.i); for (let j = 0; j <= n; j++) { const u = n ? j / n : 1; arr[d.i + Math.sign(i - d.i) * j] = d.v + (v - d.v) * u; } }
+    d.i = i; d.v = v;
+    wd.edited[d.plane] = true;
+  }
+  // capture phase on the canvas, so a drag that starts on the floor/wall draws instead of orbiting
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!wd.on || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    castPointer(e);
+    const h = ray.intersectObjects([floorMesh, wallMesh], false)[0];
+    if (!h) return;          // empty space → orbit as usual
+    e.stopImmediatePropagation();
+    e.preventDefault();
+    canvas.setPointerCapture(e.pointerId);
+    wd.drag = { id: e.pointerId, plane: h.object === floorMesh ? 'floor' : 'wall', i: null, v: 0 };
+    paint(e);
+  }, true);
+  canvas.addEventListener('pointermove', (e) => {
+    if (!wd.on) return;
+    castPointer(e);
+    if (wd.drag && wd.drag.id === e.pointerId) { e.stopImmediatePropagation(); paint(e); return; }
+    if (e.pointerType === 'mouse' && !e.buttons) canvas.style.cursor = ray.intersectObjects([floorMesh, wallMesh], false).length ? 'crosshair' : '';
+  }, true);
+  const endDrag = (e) => { if (wd.drag && wd.drag.id === e.pointerId) { e.stopImmediatePropagation(); wd.drag = null; } };
+  canvas.addEventListener('pointerup', endDrag, true);
+  canvas.addEventListener('pointercancel', endDrag, true);
+
+  function renderWaves() {
+    const { xs, ys } = wd, z0 = RIBBON_LEN / 2;
+    for (const l of Object.values(L)) l.begin();
+    const g = L.guide;
+    for (const z of [z0, -z0]) { g.seg(-0.75, FLOOR_Y, z, 0.75, FLOOR_Y, z); g.seg(WALL_X, FLOOR_Y, z, WALL_X, 0.65, z); }
+    for (const x of [-0.75, 0.75]) g.seg(x, FLOOR_Y, z0, x, FLOOR_Y, -z0);
+    g.seg(WALL_X, 0.65, z0, WALL_X, 0.65, -z0);
+    for (let q = 1; q < 4; q++) { const z = z0 - (RIBBON_LEN * q) / 4; g.seg(-0.75, FLOOR_Y, z, 0.75, FLOOR_Y, z); g.seg(WALL_X, FLOOR_Y, z, WALL_X, 0.65, z); }
+    g.seg(-0.75, 0, z0, 0.75, 0, z0); g.seg(0, FLOOR_Y, z0, 0, 0.65, z0);           // front-plane axes
+    for (let i = 0; i < WB; i++) {
+      const j = i + 1, za = binZ(i), zb = binZ(j);
+      if (j < WB) {
+        L.wave.seg(xs[i], FLOOR_Y, za, xs[j], FLOOR_Y, zb);
+        L.wave.seg(WALL_X, ys[i], za, WALL_X, ys[j], zb);
+        L.trailDim.seg(xs[i], ys[i], za, xs[j], ys[j], zb);
+      }
+      const k = j % WB;
+      L.trail.seg(xs[i], ys[i], z0, xs[k], ys[k], z0);                             // the shape they make
+      if (i % 40 === 0) { g.seg(xs[i], ys[i], za, xs[i], FLOOR_Y, za); g.seg(xs[i], ys[i], za, WALL_X, ys[i], za); }
+    }
+    for (const l of Object.values(L)) l.end();
+    tipMesh.visible = false;
+    state.rateTarget = 1;
+    renderer.render(scene, camera);
+    tipMesh.visible = true;
+  }
+  function applyWaves() {
+    const { xs, ys } = wd, n = N, pts = new Array(n);
+    let lo = Infinity, hi = -Infinity;
+    for (let m = 0; m < n; m++) {
+      const u = (m / n) * WB, i = Math.floor(u), f = u - i, j = (i + 1) % WB;
+      pts[m] = { x: xs[i] + (xs[j] - xs[i]) * f, y: -(ys[i] + (ys[j] - ys[i]) * f) };
+      lo = Math.min(lo, pts[m].x, pts[m].y); hi = Math.max(hi, pts[m].x, pts[m].y);
+    }
+    if (!(hi - lo > 1e-6)) return err3('Both waves are flat. Draw on the floor or the wall first.');
+    const edited = wd.edited.floor && wd.edited.wall ? 'both' : wd.edited.floor ? 'floor' : wd.edited.wall ? 'wall' : 'none';
+    setWaveMode(false);
+    api.loadTimed(pts);
+    api.track('3d-wave-shape', { edited });
+  }
+
   /* ---------- source switching & UI ---------- */
   function resetCamera() {
     const dir = view.source === 'ribbon' ? new THREE.Vector3(0.95, 0.55, 0.75) : new THREE.Vector3(0.45, 0.4, 1);
@@ -450,12 +576,19 @@ export function createView3D(api) {
     view.source = src;
     $('srcRibbon').classList.toggle('active', src === 'ribbon');
     $('srcCurve').classList.toggle('active', src === 'curve');
-    $('note3d').textContent = src === 'ribbon'
-      ? 'Your 2D shape with time as depth. Floor = x(t), side wall = y(t): every drawing is two waves.'
-      : 'Each circle becomes a spinning tilted ellipse in 3D. Drag to orbit, scroll to zoom.';
+    if (src === 'curve') setWaveMode(false);
+    else if (wd.on) wavesFromShape();    // a new 2D shape while drawing waves → start from its waves
+    noteText();
     document.body.classList.toggle('src-curve', src === 'curve');
     if (changed) { resetCamera(); api.afterSourceChange(); }
     if (changed && !silent) api.track('3d-source', { source: src });
+  }
+  function noteText() {
+    $('note3d').textContent = wd.on
+      ? 'Drag on the floor to draw x over time, and on the side wall to draw y over time (front = start, back = end). The bright shape at the front is what the two waves make. Drag empty space to orbit.'
+      : view.source === 'ribbon'
+        ? 'Your 2D shape with time as depth. Floor = x(t), side wall = y(t): every drawing is two waves.'
+        : 'Each circle becomes a spinning tilted ellipse in 3D. Drag to orbit, scroll to zoom.';
   }
   const sampleFn = (fn, n = 2000) => Array.from({ length: n }, (_, i) => fn(i / n));
   const err3 = (msg) => { $('err3d').textContent = msg || ''; };
@@ -504,6 +637,12 @@ export function createView3D(api) {
       api.track('3d-import-failed', { reason: String(e.message || e).slice(0, 60) });
     }
   });
+  $('waveDrawBtn').addEventListener('click', () => { err3(); setWaveMode(true); });
+  $('waveApplyBtn').addEventListener('click', () => { err3(); applyWaves(); });
+  $('waveCancelBtn').addEventListener('click', () => { err3(); setWaveMode(false); });
+  $('waveFlatX').addEventListener('click', () => { wd.xs.fill(0); wd.edited.floor = true; });
+  $('waveFlatY').addEventListener('click', () => { wd.ys.fill(0); wd.edited.wall = true; });
+  $('waveReset').addEventListener('click', () => wavesFromShape());
   $('srcRibbon').addEventListener('click', () => setSource('ribbon'));
   $('srcCurve').addEventListener('click', () => setSource('curve'));
   const bind = (id, key) => $(id).addEventListener('change', (e) => { opts3[key] = e.target.checked; api.track('toggle', { option: '3d-' + key, on: e.target.checked }); });
@@ -513,7 +652,7 @@ export function createView3D(api) {
   Object.assign(view, {
     canvas,
     activate() { view.active = true; updateColors(); resize(); setSource(view.source, true); resetCamera(); },
-    deactivate() { view.active = false; },
+    deactivate() { view.active = false; setWaveMode(false); },
     render, resize, updateColors, setSource,
     termCount: () => (view.source === 'curve' && terms3 ? terms3.length : N),
     smallestZoom, maxZoom,
