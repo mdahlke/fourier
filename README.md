@@ -13,9 +13,14 @@ Draw anything and watch a chain of spinning arrows (a Fourier series / epicycles
     knot, coil, sphere figure-8, baseball seam, Lissajous), "make your drawing 3D" (wave, cylinder,
     sphere, saddle), or import your own `x y z` points
   - drag to orbit, same circles/speed/zoom/dive controls as 2D
+- **4D mode** (button or `4` key): closed curves in four dimensions. Each circle is a spinning ellipse
+  in 4D, shown as its perspective "shadow" in 3D (looking along the 4th axis *w*) and coloured by *w*,
+  inside a rotating tesseract. Presets (Clifford torus knot, tesseract tour, duo-coil, 3-sphere wander,
+  4D Lissajous), "make it 4D" from your drawing or the current 3D curve, and a slider to turn the
+  curve through the 4th dimension
 
 Plain HTML/CSS/JS in `public/`, no build step. The only library is [three.js](https://threejs.org)
-r170 (MIT) for the 3D view, vendored in `public/vendor/three/` — no CDNs, so the strict CSP stays intact.
+r170 (MIT) for the 3D/4D view, vendored in `public/vendor/three/` — no CDNs, so the strict CSP stays intact.
 
 ## Run locally
 
@@ -89,6 +94,8 @@ Drawings themselves are never sent.
 | `3d-preset` / `3d-from-drawing` | picked a 3D shape / turned their drawing into 3D | `name` / `kind` |
 | `3d-import` / `3d-import-failed` | imported 3D points / it failed | `points` (bucket) / `reason` |
 | `3d-wave-draw` / `3d-wave-shape` | opened floor & wall drawing / turned it into a shape | — / `edited` (floor, wall, both, none) |
+| `4d-preset` / `4d-from` | picked a 4D shape / made a 4D curve from a drawing or 3D curve | `name` / `kind` |
+| `4d-turn` | first use of the "turn through 4D" slider (once per visit) | — |
 | `3d-orbit` | first camera drag (once per visit) | — |
 | `3d-failed` | 3D couldn't start (e.g. no WebGL) | `reason` |
 | `session-summary` | when the visitor leaves | `duration`, `drawings`, `presets`, `imports`, `dives`, `pngs`, `maxCircles`, `maxZoom`, `input`, `used3d` |

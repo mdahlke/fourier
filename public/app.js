@@ -29,7 +29,7 @@ const trackSettled = (name, getData, ms = 1500) => { clearTimeout(timers[name]);
 const bucket = (v, edges) => { for (const [max, label] of edges) if (v <= max) return label; return edges[edges.length - 1][1]; };
 const circlesBucket = (m) => bucket(m, [[10, '1-10'], [50, '11-50'], [250, '51-250'], [1000, '251-1000'], [Infinity, '1001-2048']]);
 const zoomBucket = (z) => z < 1 ? '<1×' : z < 10 ? '1-10×' : '10^' + Math.floor(Math.log10(z)) + '×';
-const session = { start: Date.now(), drawings: 0, presets: 0, imports: 0, dives: 0, pngs: 0, maxCircles: 0, maxZoom: 1, touch: false, used3d: false };
+const session = { start: Date.now(), drawings: 0, presets: 0, imports: 0, dives: 0, pngs: 0, maxCircles: 0, maxZoom: 1, touch: false, used3d: false, used4d: false };
 function sendSummary() {
   const secs = (Date.now() - session.start) / 1000;
   trackOnce('session-summary', {
@@ -37,7 +37,7 @@ function sendSummary() {
     drawings: session.drawings, presets: session.presets, imports: session.imports, dives: session.dives, pngs: session.pngs,
     maxCircles: circlesBucket(session.maxCircles || 0), maxZoom: zoomBucket(session.maxZoom),
     input: session.touch ? 'touch' : 'mouse',
-    used3d: session.used3d,
+    used3d: session.used3d, used4d: session.used4d,
   });
 }
 addEventListener('pagehide', sendSummary);
@@ -346,7 +346,7 @@ const PRESETS = {
 };
 
 /* ---------------- UI wiring ---------------- */
-const in3d = () => state.view === '3d' && view3d;
+const in3d = () => state.view !== '2d' && view3d;   // 3D and 4D share the WebGL view
 const maxTerms = () => (in3d() ? view3d.termCount() : N);
 const termsFromSlider = (v) => Math.max(1, Math.round(Math.pow(maxTerms(), v / 1000)));
 const sliderFromTerms = (m) => Math.round((Math.log(m) / Math.log(maxTerms())) * 1000);
@@ -415,7 +415,7 @@ function dive(target) {
   const from = Math.log(state.zoom), to = Math.log(target);
   state.dive = { from, to, start: performance.now(), dur: Math.min(9000, 800 + Math.abs(to - from) * 300) };
 }
-$('drawBtn').addEventListener('click', () => { if (state.view === '3d') setView('2d'); startNewDrawing(); track('new-drawing'); });
+$('drawBtn').addEventListener('click', () => { if (state.view !== '2d') setView('2d'); startNewDrawing(); track('new-drawing'); });
 $('animBtn').addEventListener('click', () => animateDrawing('button'));
 $('undoBtn').addEventListener('click', () => { undo(); trackOnce('undo'); });
 $('pauseBtn').addEventListener('click', () => togglePause('button'));
@@ -481,6 +481,7 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'd') userDive('key');
   else if (k === '0') dive(1);
   else if (k === '3') setView(state.view === '3d' ? '2d' : '3d');
+  else if (k === '4') setView(state.view === '4d' ? '2d' : '4d');
   else return;
   trackOnce('shortcut', { key: k }, 'shortcut:' + k); // which shortcuts people discover (once each per visit)
 });
@@ -497,7 +498,7 @@ canvas.addEventListener('wheel', onWheel, { passive: false });
 let view3d = null;
 async function setView(v) {
   if (v === state.view) return;
-  if (v === '3d' && !view3d) {
+  if (v !== '2d' && !view3d) {
     try {
       const mod = await import('./fourier3d.js');
       view3d = mod.createView3D({
@@ -514,14 +515,14 @@ async function setView(v) {
       return;
     }
   }
-  if (v === '3d' && state.mode !== 'anim') { // make sure there's a shape to show
+  if (v !== '2d' && state.mode !== 'anim') { // make sure there's a shape to show
     if (state.strokes.some((s) => s.length)) animateDrawing('3d'); else loadShape(PRESETS['🦕 Dino']());
   }
   state.view = v;
-  document.body.classList.toggle('view-3d', v === '3d');
-  $('view2dBtn').classList.toggle('active', v === '2d');
-  $('view3dBtn').classList.toggle('active', v === '3d');
-  if (v === '3d') { view3d.activate(); session.used3d = true; } else if (view3d) view3d.deactivate();
+  document.body.classList.toggle('view-3d', v !== '2d');
+  document.body.classList.toggle('view-4d', v === '4d');
+  for (const m of ['2d', '3d', '4d']) $('view' + m + 'Btn').classList.toggle('active', v === m);
+  if (v !== '2d') { view3d.activate(v); session.used3d = true; if (v === '4d') session.used4d = true; } else if (view3d) view3d.deactivate();
   state.dive = null;
   setM(state.M);
   setZoom(1);
@@ -529,6 +530,7 @@ async function setView(v) {
 }
 $('view2dBtn').addEventListener('click', () => setView('2d'));
 $('view3dBtn').addEventListener('click', () => setView('3d'));
+$('view4dBtn').addEventListener('click', () => setView('4d'));
 
 /* ---------------- freehand drawing ---------------- */
 canvas.addEventListener('pointerdown', (e) => {

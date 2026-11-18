@@ -122,3 +122,13 @@ body.view-3d #c, body.view-3d #hint { display: none; }
 body.wave-draw .wave-only { display: grid; grid-template-columns: 1fr 1fr; }
 body.wave-draw .wave-hide { display: none; }
 .wave-only #waveApplyBtn { grid-column: span 2; }
+
+/* 4D */
+.only-4d { display: none; }
+body.view-4d .only-4d { display: revert; }
+body.view-4d section.only-4d { display: block; }
+body.view-4d .toggles label.only-4d { display: flex; }
+body.view-4d .not-4d, body.view-4d .ribbon-only, body.view-4d .curve-only { display: none !important; }
+.presets.two { grid-template-columns: 1fr 1fr; }
+.w-cold { color: #2173f2; font-weight: 600; }
+.w-hot { color: var(--trail); font-weight: 600; }

@@ -23,9 +23,23 @@
     <section class="seg" role="tablist" aria-label="View">
       <button id="view2dBtn" class="active" role="tab">2D</button>
       <button id="view3dBtn" role="tab">3D</button>
+      <button id="view4dBtn" role="tab">4D</button>
     </section>
 
-    <section class="only-3d">
+    <section class="only-4d">
+      <p class="note">A closed curve in <b>four</b> dimensions. Every circle is a spinning ellipse in 4D; you see its
+        3D “shadow”, viewed along the 4th axis <i>w</i>. Colour is <i>w</i>: <span class="w-cold">blue</span> = near,
+        <span class="w-hot">bright</span> = far. The cube-in-a-cube is a tesseract, for scale.</p>
+      <label class="title">4D shapes</label>
+      <div class="presets" id="presets4d"></div>
+      <label class="title">Make it 4D</label>
+      <div class="presets two" id="lift4d"></div>
+      <label class="title">Turn through 4D <output id="rot4Out"></output></label>
+      <input type="range" id="rot4" min="0" max="359" value="34">
+      <p class="err" id="err4d"></p>
+    </section>
+
+    <section class="only-3d not-4d">
       <div class="seg">
         <button id="srcRibbon" class="active">⏳ Time ribbon</button>
         <button id="srcCurve">🧶 3D curve</button>
@@ -57,7 +71,7 @@
       <button id="pauseBtn" title="Space">⏸ Pause</button>
     </section>
 
-    <section>
+    <section class="not-4d">
       <label class="title"><span class="only-2d">Presets</span><span class="only-3d">2D presets (time ribbon)</span></label>
       <div class="presets" id="presets"></div>
     </section>
@@ -84,10 +98,12 @@
       <label class="only-2d"><input type="checkbox" id="optAuto" checked> Auto-animate after drawing</label>
       <label class="only-3d ribbon-only"><input type="checkbox" id="optWaves" checked> Show x/y waves on floor &amp; wall</label>
       <label class="only-3d curve-only"><input type="checkbox" id="optShadow" checked> Show floor shadow</label>
+      <label class="only-4d"><input type="checkbox" id="opt4Spin" checked> Keep turning through the 4th dimension</label>
+      <label class="only-4d"><input type="checkbox" id="opt4Cube" checked> Show tesseract</label>
       <label class="only-3d"><input type="checkbox" id="optSpin"> Auto-rotate camera</label>
     </section>
 
-    <section class="only-3d">
+    <section class="only-3d not-4d">
       <label class="title">Import 3D points</label>
       <textarea id="points3d" rows="3" placeholder="x y z per line, or JSON [[x,y,z], …]"></textarea>
       <button id="points3dBtn">Use 3D points</button>
@@ -106,7 +122,7 @@
     </section>
 
     <footer>
-      <kbd>Space</kbd> pause · <kbd>Enter</kbd> animate · <kbd>Scroll</kbd> zoom (<kbd>Shift</kbd> faster) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>D</kbd> dive · <kbd>0</kbd> reset · <kbd>Z</kbd> undo · <kbd>3</kbd> 2D/3D · <span class="only-3d">drag to orbit</span>
+      <kbd>Space</kbd> pause · <kbd>Enter</kbd> animate · <kbd>Scroll</kbd> zoom (<kbd>Shift</kbd> faster) · <kbd>+</kbd>/<kbd>−</kbd> zoom · <kbd>D</kbd> dive · <kbd>0</kbd> reset · <kbd>Z</kbd> undo · <kbd>3</kbd> 3D · <kbd>4</kbd> 4D · <span class="only-3d">drag to orbit</span>
     </footer>
   </aside>
 

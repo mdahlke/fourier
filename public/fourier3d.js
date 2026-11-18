@@ -7,6 +7,9 @@
 //  • "curve": a real 3D closed curve. Each frequency k contributes a(cos 2πkt) + b(sin 2πkt) with
 //    3D vectors a, b — a spinning *tilted ellipse* — and the chain of ellipses traces the curve.
 //
+//  • "hyper" (4D): a closed curve in four dimensions. Each frequency is a spinning ellipse in 4D; the
+//    scene is its perspective "shadow" in 3D (looking along w), coloured by w, inside a tesseract.
+//
 // Everything is computed in float64 relative to an anchor point (the pen tip when zoomed) and only
 // then scaled into float32 GPU buffers, so deep zoom stays steady.
 
@@ -24,6 +27,20 @@ const CLIP = 14;               // clip geometry to this radius (scene units) aro
 const ZOOM_CAP = 1e8;
 const ZOOM_PAST = 30;
 const MAX_POINTS = 100000;
+const PD = 2.5;                // 4D viewer distance along w (perspective 4D → 3D)
+
+// Gray-code walk around the 16 corners of a tesseract (each step flips one coordinate)
+const TESS = Array.from({ length: 16 }, (_, i) => { const g = i ^ (i >> 1); return [0, 1, 2, 3].map((b) => ((g >> b) & 1 ? 0.5 : -0.5)); });
+const PRESETS_4D = {
+  '🍩 Clifford knot': (s) => { const t = TAU * s; return [Math.cos(2 * t), Math.sin(2 * t), Math.cos(3 * t), Math.sin(3 * t)]; },
+  '🧊 Tesseract tour': (s) => { const u = s * 16, i = Math.floor(u) % 16, f = u - Math.floor(u), a = TESS[i], b = TESS[(i + 1) % 16]; return a.map((v, d) => v + (b[d] - v) * f); },
+  '🌀 Duo-coil': (s) => { const t = TAU * s; return [Math.cos(t), Math.sin(t), 0.35 * Math.cos(9 * t), 0.35 * Math.sin(9 * t)]; },
+  '🌐 3-sphere wander': (s) => { const t = TAU * s, e = Math.PI / 4 + 0.6 * Math.sin(4 * t); return [Math.cos(e) * Math.cos(t), Math.cos(e) * Math.sin(t), Math.sin(e) * Math.cos(3 * t), Math.sin(e) * Math.sin(3 * t)]; },
+  '〰️ 4D Lissajous': (s) => { const t = TAU * s; return [Math.sin(3 * t), Math.sin(2 * t + 0.6), Math.sin(5 * t + 1.1), Math.sin(4 * t + 0.3)]; },
+};
+const TESS_EDGES = [];
+for (let a = 0; a < 16; a++) for (let b = 0; b < 4; b++) if (!(a & (1 << b))) TESS_EDGES.push([a, a | (1 << b)]);
+const corner = (i) => [0, 1, 2, 3].map((b) => ((i >> b) & 1 ? 0.5 : -0.5));
 
 const PRESETS_3D = {
   '🪢 Trefoil': (s) => { const t = TAU * s; return [Math.sin(t) + 2 * Math.sin(2 * t), Math.cos(t) - 2 * Math.cos(2 * t), -Math.sin(3 * t)]; },
@@ -72,7 +89,8 @@ export function createView3D(api) {
   const materials = {};
   const mat = (name, width) => (materials[name] = new LineMaterial({ linewidth: width, transparent: true, depthWrite: false, worldUnits: false }));
   class Lines {
-    constructor(material, order) {
+    constructor(material, order, colored = false) {
+      this.colored = colored;
       this.geo = new LineSegmentsGeometry();
       this.cap = 0; this.n = 0;
       this.grow(4096);
@@ -86,6 +104,12 @@ export function createView3D(api) {
       if (this.arr) arr.set(this.arr.subarray(0, this.n * 6));
       this.geo.setPositions(arr);
       this.arr = this.geo.attributes.instanceStart.data.array;
+      if (this.colored) {
+        const carr = new Float32Array(cap * 6);
+        if (this.carr) carr.set(this.carr.subarray(0, this.n * 6));
+        this.geo.setColors(carr);
+        this.carr = this.geo.attributes.instanceColorStart.data.array;
+      }
       this.cap = cap;
     }
     begin() { this.n = 0; }
@@ -106,9 +130,17 @@ export function createView3D(api) {
       if (this.n >= this.cap) this.grow(this.cap * 2);
       const o = this.n++ * 6, A = this.arr;
       A[o] = x0; A[o + 1] = y0; A[o + 2] = z0; A[o + 3] = x1; A[o + 4] = y1; A[o + 5] = z1;
+      return o;
+    }
+    // coloured segment: endpoint colours from w values (cold → hot)
+    segw(x0, y0, z0, x1, y1, z1, w0, w1) {
+      const o = this.seg(x0, y0, z0, x1, y1, z1);
+      if (o === undefined) return;
+      wColor(w0, this.carr, o); wColor(w1, this.carr, o + 3);
     }
     end() {
       this.geo.attributes.instanceStart.data.needsUpdate = true;
+      if (this.colored) this.geo.attributes.instanceColorStart.data.needsUpdate = true;
       this.geo.instanceCount = this.n;
       this.obj.visible = this.n > 0;
     }
@@ -122,7 +154,15 @@ export function createView3D(api) {
     circle: new Lines(mat('circle', 1), 5),
     arrow: new Lines(mat('arrow', 1.4), 6),
     trail: new Lines(mat('trail', 2.6), 7),
+    trail4: new Lines(mat('trail4', 2.8), 8, true),
   };
+  materials.trail4.vertexColors = true;
+  // w → colour: cold (w < 0, toward the viewer in 4D) to hot (w > 0, away)
+  const COLD = new THREE.Color(), HOT = new THREE.Color();
+  function wColor(w, out, o) {
+    const u = Math.min(1, Math.max(0, 0.5 + w)); // shapes are normalized to |w| ≲ 0.5
+    out[o] = COLD.r + (HOT.r - COLD.r) * u; out[o + 1] = COLD.g + (HOT.g - COLD.g) * u; out[o + 2] = COLD.b + (HOT.b - COLD.b) * u;
+  }
   const tipMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), new THREE.MeshBasicMaterial({ transparent: true, depthTest: false }));
   tipMesh.renderOrder = 10;
   scene.add(tipMesh);
@@ -153,6 +193,8 @@ export function createView3D(api) {
     set('trailDim', col.trail, 0.3); set('wave', col.ink, 0.85); set('trail', col.trail, 1);
     set('circle', col.circle, Math.min(1, parseColor(col.circle).a * 1.3)); set('arrow', col.arrow);
     tipMesh.material.color.copy(parseColor(col.trail).c);
+    materials.trail4.color.setRGB(1, 1, 1); materials.trail4.opacity = 1;
+    HOT.copy(parseColor(col.trail).c); COLD.setRGB(0.13, 0.45, 0.95, THREE.SRGBColorSpace);
     planeMat.color.copy(parseColor(col.trail).c);
   }
 
@@ -222,6 +264,7 @@ export function createView3D(api) {
     original3 = normalize3(r);
     terms3 = dft3(original3);
     curve3M = -1;
+    state.M = Math.max(state.M, Math.min(727, terms3.length));
     setSource('curve', true);
     state.mode = 'anim'; state.t = 0; state.loops = 0; state.paused = false;
     api.afterLoad();
@@ -262,10 +305,11 @@ export function createView3D(api) {
   const tv = new Float64Array((N + 1) * 3), rel = new Float64Array((N + 1) * 3);
   const axA = new Float64Array(N * 3), axB = new Float64Array(N * 3), sizes = new Float64Array(N), freqs = new Int32Array(N);
 
-  function cameraDistance() { return view.source === 'ribbon' ? 3.1 : 2.5; }
+  function cameraDistance() { return view.source === 'ribbon' ? 3.1 : view.source === 'hyper' ? 3.3 : 2.5; }
   function pxPerUnit() { return innerHeight / (2 * Math.tan((camera.fov * Math.PI) / 360) * cameraDistance()); }
   function smallestSize() {
     if (view.source === 'curve') { const M = curveM(); return M > 1 ? terms3[M - 1].size : 0; }
+    if (view.source === 'hyper') { const M = curveM4(); return M > 1 ? terms4[M - 1].size : 0; }
     return state.coeffs && state.M > 1 ? state.coeffs[state.M - 1].amp : 0;
   }
   function smallestZoom() {
@@ -310,6 +354,7 @@ export function createView3D(api) {
     const t = state.t;
     controls.autoRotate = opts3.spin;
     controls.update();
+    if (view.source === 'hyper') return renderHyper();
     if (wd.on) return renderWaves();
 
     // ---- chain terms ----
@@ -449,6 +494,231 @@ export function createView3D(api) {
     renderer.render(scene, camera);
   }
 
+  /* ---------- 4D ---------- */
+  // Generic D-dimensional versions of the curve helpers (used for 4D).
+  function resampleD(pts, n, D) {
+    const P = pts.concat([pts[0]]), cum = [0];
+    for (let i = 1; i < P.length; i++) { let d2 = 0; for (let a = 0; a < D; a++) d2 += (P[i][a] - P[i - 1][a]) ** 2; cum.push(cum[i - 1] + Math.sqrt(d2)); }
+    const len = cum[cum.length - 1];
+    if (!(len > 0)) return null;
+    const out = [];
+    let j = 0;
+    for (let i = 0; i < n; i++) {
+      const d = (len * i) / n;
+      while (j < cum.length - 2 && cum[j + 1] < d) j++;
+      const f = (d - cum[j]) / (cum[j + 1] - cum[j] || 1);
+      out.push(P[j].map((v, a) => v + (P[j + 1][a] - v) * f));
+    }
+    return out;
+  }
+  function normalizeD(pts, D) {
+    const lo = Array(D).fill(Infinity), hi = Array(D).fill(-Infinity);
+    for (const p of pts) for (let a = 0; a < D; a++) { lo[a] = Math.min(lo[a], p[a]); hi[a] = Math.max(hi[a], p[a]); }
+    const s = 1 / (Math.max(...hi.map((v, a) => v - lo[a])) || 1), c = lo.map((v, a) => (v + hi[a]) / 2);
+    return pts.map((p) => p.map((v, a) => (v - c[a]) * s));
+  }
+  function dftD(pts, D) {
+    const out = [];
+    for (let k = 0; k < N / 2; k++) {
+      const re = new Float64Array(D), im = new Float64Array(D);
+      for (let n = 0; n < N; n++) {
+        const idx = (k * n) % N, c = COS[idx], s = SIN[idx], p = pts[n];
+        for (let a = 0; a < D; a++) { re[a] += p[a] * c; im[a] -= p[a] * s; }
+      }
+      const f = k === 0 ? 1 / N : 2 / N;
+      const a = Array.from(re, (v) => v * f), b = Array.from(im, (v) => -v * f);
+      const na = Math.hypot(...a), nb = Math.hypot(...b);
+      out.push({ k, a, b, size: Math.max(na, nb, Math.sqrt((na * na + nb * nb) / 2)) });
+    }
+    const rest = out.slice(1).sort((p, q) => q.size - p.size);
+    const floor = (rest[0] ? rest[0].size : 1) * 1e-10;
+    return [out[0], ...rest.filter((t) => t.size > floor)];
+  }
+  let terms4 = null, original4 = null, curve4 = null, curve4M = -1, vmax4 = 1;
+  const curveM4 = () => Math.min(state.M, terms4 ? terms4.length : 1);
+  function loadCurve4(pts) {
+    const r = resampleD(pts, N, 4);
+    if (!r) throw new Error('That curve has no length.');
+    original4 = normalizeD(r, 4);
+    terms4 = dftD(original4, 4);
+    curve4M = -1;
+    state.M = Math.max(state.M, Math.min(727, terms4.length));
+    state.mode = 'anim'; state.t = 0; state.loops = 0; state.paused = false;
+    api.afterLoad();
+  }
+  function buildCurve4() {
+    const M = curveM4(), R = CURVE_RES, out = new Float64Array((R + 1) * 4);
+    let vmax = 0;
+    for (let i = 0; i < M; i++) {
+      const { k, a, b, size } = terms4[i];
+      vmax += TAU * k * size;
+      const st = (TAU * k) / R, sc = Math.cos(st), ss = Math.sin(st);
+      let c = 1, s = 0;
+      for (let j = 0; j <= R; j++) {
+        for (let d = 0; d < 4; d++) out[4 * j + d] += a[d] * c + b[d] * s;
+        const nc = c * sc - s * ss; s = c * ss + s * sc; c = nc;
+      }
+    }
+    curve4 = out; curve4M = M; vmax4 = vmax || 1;
+  }
+  let fine4 = new Float64Array(0);
+  function sampleRange4(t0, t1, steps, M) {
+    if (fine4.length !== (steps + 1) * 4) fine4 = new Float64Array((steps + 1) * 4);
+    const out = fine4.fill(0), dt = (t1 - t0) / steps;
+    for (let i = 0; i < M; i++) {
+      const { k, a, b } = terms4[i];
+      const th = TAU * k * t0, st = TAU * k * dt, sc = Math.cos(st), ss = Math.sin(st);
+      let c = Math.cos(th), s = Math.sin(th);
+      for (let j = 0; j <= steps; j++) {
+        for (let d = 0; d < 4; d++) out[4 * j + d] += a[d] * c + b[d] * s;
+        const nc = c * sc - s * ss; s = c * ss + s * sc; c = nc;
+      }
+    }
+    return out;
+  }
+
+  // 4D orientation: a turn in the x–w plane plus a slower one in the z–w plane
+  const hyper = { phi: 0.6, spin: true, cube: true, last: 0 };
+  let rc1 = 1, rs1 = 0, rc2 = 1, rs2 = 0;
+  function setRot() { rc1 = Math.cos(hyper.phi); rs1 = Math.sin(hyper.phi); rc2 = Math.cos(0.618 * hyper.phi); rs2 = Math.sin(0.618 * hyper.phi); }
+  function rot4(src, si, dst, di) {
+    const x = src[si], y = src[si + 1], z = src[si + 2], w = src[si + 3];
+    const x1 = x * rc1 - w * rs1, w1 = x * rs1 + w * rc1;
+    dst[di] = x1; dst[di + 1] = y; dst[di + 2] = z * rc2 - w1 * rs2; dst[di + 3] = z * rs2 + w1 * rc2;
+  }
+  const tv4 = new Float64Array((N + 1) * 4), rel4 = new Float64Array((N + 1) * 4);
+  const axA4 = new Float64Array(N * 4), axB4 = new Float64Array(N * 4), tmp4 = new Float64Array(4);
+  let proj4 = new Float64Array(0), projW = new Float64Array(0);
+
+  function renderHyper() {
+    if (!terms4) return;
+    if (curve4M !== curveM4()) buildCurve4();
+    const now = performance.now(), dtR = Math.min(0.05, (now - hyper.last) / 1000 || 0);
+    hyper.last = now;
+    if (hyper.spin && !state.paused) { hyper.phi = (hyper.phi + dtR * 0.3) % TAU; syncRotSlider(); }
+    setRot();
+    const t = state.t, M = curveM4(), Z = state.zoom;
+
+    // chain in rotated 4D coordinates
+    for (let i = 0; i < M; i++) {
+      const { k, a, b, size } = terms4[i], th = TAU * k * t, c = Math.cos(th), s = Math.sin(th);
+      rot4(a, 0, axA4, 4 * i); rot4(b, 0, axB4, 4 * i);
+      for (let d = 0; d < 4; d++) tv4[4 * i + d] = axA4[4 * i + d] * c + axB4[4 * i + d] * s;
+      sizes[i] = size; freqs[i] = k;
+    }
+    const T = [0, 0, 0, 0];
+    for (let i = 0; i < M; i++) for (let d = 0; d < 4; d++) T[d] += tv4[4 * i + d];
+    for (let d = 0; d < 4; d++) rel4[4 * M + d] = 0;
+    for (let i = M - 1; i >= 0; i--) for (let d = 0; d < 4; d++) rel4[4 * i + d] = rel4[4 * i + 4 + d] - tv4[4 * i + d];
+
+    // perspective along w. pd(): projected offset of (tip + d) from the projected tip, computed from
+    // the difference only, so it stays exact for the tiny circles seen at deep zoom.
+    const sT = PD / (PD - T[3]), PT = [T[0] * sT, T[1] * sT, T[2] * sT];
+    const f = opts.follow ? Math.min(1, Math.max(0, Z - 1)) : 0;
+    const tipX = (1 - f) * PT[0] * Z, tipY = (1 - f) * PT[1] * Z, tipZ = (1 - f) * PT[2] * Z;
+    const ax = f * PT[0], ay = f * PT[1], az = f * PT[2];
+    const out3 = [0, 0, 0];
+    const pd = (dx, dy, dz, dw) => {
+      const sq = PD / (PD - T[3] - dw), g = (sq * sT * dw) / PD;
+      out3[0] = tipX + (dx * sq + T[0] * g) * Z; out3[1] = tipY + (dy * sq + T[1] * g) * Z; out3[2] = tipZ + (dz * sq + T[2] * g) * Z;
+      return out3;
+    };
+    // absolute point (already rotated) → scene
+    const pa = (x, y, z, w, o) => { const s = PD / (PD - w); o[0] = (x * s - ax) * Z; o[1] = (y * s - ay) * Z; o[2] = (z * s - az) * Z; return o; };
+    const ppu = pxPerUnit();
+    camera.position.setLength(cameraDistance());
+    controls.target.set(0, 0, 0);
+    for (const l of Object.values(L)) l.begin();
+    const p = [0, 0, 0], q = [0, 0, 0], r4 = new Float64Array(4);
+
+    // tesseract for scale
+    if (hyper.cube && Z < 3) {
+      for (const [i, j] of TESS_EDGES) {
+        rot4(corner(i), 0, r4, 0); pa(r4[0], r4[1], r4[2], r4[3], p);
+        rot4(corner(j), 0, r4, 0); pa(r4[0], r4[1], r4[2], r4[3], q);
+        L.guide.seg(p[0], p[1], p[2], q[0], q[1], q[2]);
+      }
+    }
+    // original input
+    if (opts.original && original4) for (let i = 0; i < original4.length; i += 2) {
+      const j = (i + 2) % original4.length;
+      rot4(original4[i], 0, r4, 0); pa(r4[0], r4[1], r4[2], r4[3], p);
+      rot4(original4[j], 0, r4, 0); pa(r4[0], r4[1], r4[2], r4[3], q);
+      L.original.seg(p[0], p[1], p[2], q[0], q[1], q[2]);
+    }
+
+    // trail: project all samples once per frame
+    const R = CURVE_RES, cv = curve4;
+    if (proj4.length !== (R + 1) * 3) { proj4 = new Float64Array((R + 1) * 3); projW = new Float64Array(R + 1); }
+    for (let j = 0; j <= R; j++) { rot4(cv, 4 * j, r4, 0); pa(r4[0], r4[1], r4[2], r4[3], p); proj4[3 * j] = p[0]; proj4[3 * j + 1] = p[1]; proj4[3 * j + 2] = p[2]; projW[j] = r4[3]; }
+    const P = proj4, sg = (lines, j, k2) => lines.segw(P[3 * j], P[3 * j + 1], P[3 * j + 2], P[3 * k2], P[3 * k2 + 1], P[3 * k2 + 2], projW[j], projW[k2]);
+    const fineSpan = Z > 1.5 ? Math.min(t, 0.02, (3 * CLIP) / (vmax4 * Z)) : 0;
+    const FINE = fineSpan > 0 ? 300 : 1;
+    if (state.loops > 0) for (let j = 0; j < R; j++) L.trailDim.seg(P[3 * j], P[3 * j + 1], P[3 * j + 2], P[3 * j + 3], P[3 * j + 4], P[3 * j + 5]);
+    const coarseEnd = Math.floor((t - fineSpan) * R);
+    for (let j = 0; j < coarseEnd; j++) sg(L.trail4, j, j + 1);
+    // last stretch, relative to the pen
+    const fine = sampleRange4(t - fineSpan, t, FINE, M), e = 4 * FINE;
+    const fp = (j, o) => {
+      for (let d = 0; d < 4; d++) tmp4[d] = fine[4 * j + d] - fine[e + d];
+      rot4(tmp4, 0, r4, 0); pd(r4[0], r4[1], r4[2], r4[3]);
+      o[0] = out3[0]; o[1] = out3[1]; o[2] = out3[2]; return T[3] + r4[3];
+    };
+    let w0 = fp(0, p);
+    L.trail4.segw(P[3 * coarseEnd], P[3 * coarseEnd + 1], P[3 * coarseEnd + 2], p[0], p[1], p[2], projW[coarseEnd], w0);
+    for (let j = 1; j <= FINE; j++) { const w1 = fp(j, q); L.trail4.segw(p[0], p[1], p[2], q[0], q[1], q[2], w0, w1); p[0] = q[0]; p[1] = q[1]; p[2] = q[2]; w0 = w1; }
+
+    // 4D ellipses (sampled and projected; perspective bends them) and arrows
+    let kVis = 1;
+    const c4 = [0, 0, 0, 0];
+    const ept = (i, ang, o) => {
+      const c = Math.cos(ang), s = Math.sin(ang);
+      pd(c4[0] + axA4[4 * i] * c + axB4[4 * i] * s, c4[1] + axA4[4 * i + 1] * c + axB4[4 * i + 1] * s,
+        c4[2] + axA4[4 * i + 2] * c + axB4[4 * i + 2] * s, c4[3] + axA4[4 * i + 3] * c + axB4[4 * i + 3] * s);
+      o[0] = out3[0]; o[1] = out3[1]; o[2] = out3[2]; return o;
+    };
+    for (let i = 1; i < M; i++) {
+      const rPx = sizes[i] * Z * ppu * sT;
+      if (rPx > 30) kVis = Math.max(kVis, freqs[i]);
+      if (rPx < 0.5) continue;
+      for (let d = 0; d < 4; d++) c4[d] = rel4[4 * i + d];
+      if (opts.circles) {
+        const ctr = pd(c4[0], c4[1], c4[2], c4[3]), rS = sizes[i] * Z * 2;
+        if (Math.hypot(ctr[0], ctr[1], ctr[2]) - rS <= CLIP) {
+          let from = 0, span = TAU, n = Math.max(12, Math.min(96, Math.ceil(Math.sqrt(rPx) * 4)));
+          if (rS > CLIP * 2) { // huge: find the arc passing near the view and sample only that
+            let best = 0, bd = Infinity;
+            for (let pass = 0, lo = 0, w = TAU, cnt = 40; pass < 3; pass++) {
+              for (let j = 0; j < cnt; j++) { const a = lo + (w * j) / cnt; ept(i, a, p); const d2 = p[0] * p[0] + p[1] * p[1] + p[2] * p[2]; if (d2 < bd) { bd = d2; best = a; } }
+              w = (w * 4) / cnt; lo = best - w / 2; cnt = 16;
+            }
+            if (Math.sqrt(bd) > CLIP) n = 0;
+            else {
+              const h = 1e-6; ept(i, best - h, p); ept(i, best + h, q);
+              const v = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) / (2 * h);
+              span = Math.min(TAU, (4 * CLIP) / Math.max(v, 1e-12)); from = best - span / 2; n = 40;
+            }
+          }
+          if (n) { ept(i, from, p); for (let j = 1; j <= n; j++) { ept(i, from + (span * j) / n, q); L.circle.seg(p[0], p[1], p[2], q[0], q[1], q[2]); p[0] = q[0]; p[1] = q[1]; p[2] = q[2]; } }
+        }
+      }
+      if (opts.arrows) {
+        pd(c4[0], c4[1], c4[2], c4[3]); const x0 = out3[0], y0 = out3[1], z0 = out3[2];
+        pd(rel4[4 * i + 4], rel4[4 * i + 5], rel4[4 * i + 6], rel4[4 * i + 7]);
+        L.arrow.seg(x0, y0, z0, out3[0], out3[1], out3[2]);
+      }
+    }
+    state.rateTarget = Math.min(1, 6 / kVis);
+    for (const l of Object.values(L)) l.end();
+    tipMesh.position.set(tipX, tipY, tipZ);
+    tipMesh.scale.setScalar(0.005 * cameraDistance());
+    renderer.render(scene, camera);
+  }
+  function syncRotSlider() {
+    const deg = Math.round((hyper.phi * 180) / Math.PI) % 360;
+    $('rot4').value = deg; $('rot4Out').textContent = deg + '°';
+  }
+
   /* ---------- draw-the-waves mode ---------- */
   // Drag on the floor to draw x(t), on the side wall to draw y(t); the front plane shows the 2D shape
   // those two waves make together. Time runs from the front (t = 0) to the back (t = 1).
@@ -565,23 +835,25 @@ export function createView3D(api) {
 
   /* ---------- source switching & UI ---------- */
   function resetCamera() {
-    const dir = view.source === 'ribbon' ? new THREE.Vector3(0.95, 0.55, 0.75) : new THREE.Vector3(0.45, 0.4, 1);
+    const dir = view.source === 'ribbon' ? new THREE.Vector3(0.95, 0.55, 0.75) : view.source === 'hyper' ? new THREE.Vector3(0.6, 0.45, 1) : new THREE.Vector3(0.45, 0.4, 1);
     camera.position.copy(dir.normalize().multiplyScalar(cameraDistance()));
     controls.target.set(0, 0, 0);
     controls.update();
   }
   function setSource(src, silent) {
     if (src === 'curve' && !terms3) return loadCurve(sampleFn(PRESETS_3D['🪢 Trefoil']));
+    if (src === 'hyper' && !terms4) loadCurve4(sampleFn(PRESETS_4D['🍩 Clifford knot'], 4000));
     const changed = src !== view.source;
+    if (src !== 'hyper') view.source3 = src;
     view.source = src;
     $('srcRibbon').classList.toggle('active', src === 'ribbon');
     $('srcCurve').classList.toggle('active', src === 'curve');
-    if (src === 'curve') setWaveMode(false);
+    if (src !== 'ribbon') setWaveMode(false);
     else if (wd.on) wavesFromShape();    // a new 2D shape while drawing waves → start from its waves
     noteText();
     document.body.classList.toggle('src-curve', src === 'curve');
     if (changed) { resetCamera(); api.afterSourceChange(); }
-    if (changed && !silent) api.track('3d-source', { source: src });
+    if (changed && !silent && src !== 'hyper') api.track('3d-source', { source: src });
   }
   function noteText() {
     $('note3d').textContent = wd.on
@@ -643,6 +915,43 @@ export function createView3D(api) {
   $('waveFlatX').addEventListener('click', () => { wd.xs.fill(0); wd.edited.floor = true; });
   $('waveFlatY').addEventListener('click', () => { wd.ys.fill(0); wd.edited.wall = true; });
   $('waveReset').addEventListener('click', () => wavesFromShape());
+  // 4D panel
+  const err4 = (msg) => { $('err4d').textContent = msg || ''; };
+  for (const [name, fn] of Object.entries(PRESETS_4D)) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.addEventListener('click', () => { err4(); loadCurve4(sampleFn(fn, 4000)); api.track('4d-preset', { name: name.replace(/^\S+\s/, '') }); });
+    $('presets4d').appendChild(b);
+  }
+  const LIFTS_4D = {
+    '✏️ My drawing': () => {
+      const o = state.original;
+      if (!o) throw new Error('Draw something in 2D first.');
+      // your drawing in x/y, plus a circle in z/w turning 3 times per loop
+      return o.map((p, i) => { const a = (TAU * 3 * i) / o.length; return [p.x, -p.y, 0.25 * Math.cos(a), 0.25 * Math.sin(a)]; });
+    },
+    '🧶 Current 3D curve': () => {
+      if (!original3) throw new Error('Pick a 3D curve in 3D mode first.');
+      return original3.map((p, i) => [p[0], p[1], p[2], 0.3 * Math.sin((TAU * 2 * i) / original3.length)]);
+    },
+  };
+  for (const [name, fn] of Object.entries(LIFTS_4D)) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.addEventListener('click', () => {
+      err4();
+      try { loadCurve4(fn()); api.track('4d-from', { kind: name.replace(/^\S+\s/, '') }); } catch (e) { err4(e.message); }
+    });
+    $('lift4d').appendChild(b);
+  }
+  $('rot4').addEventListener('input', (e) => {
+    hyper.phi = (+e.target.value * Math.PI) / 180; $('rot4Out').textContent = e.target.value + '°';
+    api.trackOnce('4d-turn');
+  });
+  $('opt4Spin').addEventListener('change', (e) => { hyper.spin = e.target.checked; api.track('toggle', { option: '4d-spin', on: e.target.checked }); });
+  $('opt4Cube').addEventListener('change', (e) => { hyper.cube = e.target.checked; api.track('toggle', { option: '4d-cube', on: e.target.checked }); });
+  syncRotSlider();
+
   $('srcRibbon').addEventListener('click', () => setSource('ribbon'));
   $('srcCurve').addEventListener('click', () => setSource('curve'));
   const bind = (id, key) => $(id).addEventListener('change', (e) => { opts3[key] = e.target.checked; api.track('toggle', { option: '3d-' + key, on: e.target.checked }); });
@@ -651,10 +960,15 @@ export function createView3D(api) {
   /* ---------- public API ---------- */
   Object.assign(view, {
     canvas,
-    activate() { view.active = true; updateColors(); resize(); setSource(view.source, true); resetCamera(); },
+    activate(mode = '3d') {
+      view.active = true; updateColors(); resize();
+      setSource(mode === '4d' ? 'hyper' : view.source3 || 'ribbon', true);
+      if (mode === '4d') api.afterSourceChange();
+      resetCamera();
+    },
     deactivate() { view.active = false; setWaveMode(false); },
     render, resize, updateColors, setSource,
-    termCount: () => (view.source === 'curve' && terms3 ? terms3.length : N),
+    termCount: () => (view.source === 'curve' && terms3 ? terms3.length : view.source === 'hyper' && terms4 ? terms4.length : N),
     smallestZoom, maxZoom,
     savePng(cb) { render(); canvas.toBlob(cb); },
   });
